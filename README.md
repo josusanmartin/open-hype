@@ -19,11 +19,23 @@ Unofficial open-source Hype Machine client for Android phones and Android Auto /
 | --- | --- | --- | --- |
 | <img src="docs/screenshots/phone-latest.png" width="180" alt="Latest screen with mode chips and like-on-card hearts" /> | <img src="docs/screenshots/phone-player.png" width="180" alt="Full-screen player with breathing warm halo and ambient bottom haze" /> | <img src="docs/screenshots/phone-popular.png" width="180" alt="Popular screen with rank numbers" /> | <img src="docs/screenshots/phone-settings.png" width="180" alt="Offline settings with storage slider and version footer" /> |
 
-### Android Automotive (AAOS)
+### Android Automotive (AAOS) — system Media Templates
 
-| Latest | Player | Settings |
+What you actually see in a car: the head unit's media app renders our `MediaLibraryService` through the AAOS Media Templates — same surface Spotify, YouTube Music, etc. use. Browse roots come from our `MediaLibrarySession.Callback`; the playback chrome is system-rendered.
+
+| Latest | Popular | Now Playing |
 | --- | --- | --- |
-| <img src="docs/screenshots/car-latest.png" width="280" alt="Compact Latest screen tuned for landscape AAOS chrome" /> | <img src="docs/screenshots/car-player.png" width="280" alt="Car player with thumbnail next to title and snackbar anchored above the transport row" /> | <img src="docs/screenshots/car-settings.png" width="280" alt="Car settings using pill-based storage limits for safer touch targets" /> |
+| <img src="docs/screenshots/car-latest.png" width="280" alt="Templated Latest browse showing list rows for fresh tracks" /> | <img src="docs/screenshots/car-popular.png" width="280" alt="Templated Popular browse with chart-style track list" /> | <img src="docs/screenshots/car-player.png" width="280" alt="Templated Now Playing: artwork, title, artist, blog, transport controls" /> |
+
+> Captured by launching `com.android.car.media` with `-a android.car.intent.action.MEDIA_TEMPLATE` against `dev.josu.hypecar/dev.josu.hypecar.auto.service.HypeMediaLibraryService` on the AAOS_API_35 emulator.
+
+### AAOS — Compose immersive UI (when launched directly)
+
+When the user taps the app icon on AAOS (rather than going through the car's media app), they land in our Compose UI — a compact landscape variant of the phone layout.
+
+| Compose Settings |
+| --- |
+| <img src="docs/screenshots/car-settings.png" width="280" alt="Compose-rendered offline settings on AAOS using pill-based storage limits for safer touch targets" /> |
 
 ## Modules
 
