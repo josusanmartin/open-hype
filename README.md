@@ -11,6 +11,20 @@ Unofficial open-source Hype Machine client for Android phones and Android Auto /
 
 > Not affiliated with or endorsed by Hype Machine.
 
+## Screenshots
+
+### Phone (Pixel 9 Pro XL)
+
+| Latest | Player | Popular | Settings |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/phone-latest.png" width="180" alt="Latest screen with mode chips and like-on-card hearts" /> | <img src="docs/screenshots/phone-player.png" width="180" alt="Full-screen player with breathing warm halo and ambient bottom haze" /> | <img src="docs/screenshots/phone-popular.png" width="180" alt="Popular screen with rank numbers" /> | <img src="docs/screenshots/phone-settings.png" width="180" alt="Offline settings with storage slider and version footer" /> |
+
+### Android Automotive (AAOS)
+
+| Latest | Player | Settings |
+| --- | --- | --- |
+| <img src="docs/screenshots/car-latest.png" width="280" alt="Compact Latest screen tuned for landscape AAOS chrome" /> | <img src="docs/screenshots/car-player.png" width="280" alt="Car player with thumbnail next to title and snackbar anchored above the transport row" /> | <img src="docs/screenshots/car-settings.png" width="280" alt="Car settings using pill-based storage limits for safer touch targets" /> |
+
 ## Modules
 
 ```
