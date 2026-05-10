@@ -1,0 +1,49 @@
+<resources>
+    <string name="app_name">Open Hype</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_latest">Latest</string>
+    <string name="nav_popular">Popular</string>
+    <string name="nav_library">Library</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Mini-player + transport controls -->
+    <string name="action_previous">Previous</string>
+    <string name="action_play">Play</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_next">Next</string>
+    <string name="action_open_player">Open player</string>
+
+    <!-- Offline settings -->
+    <string name="offline_clear_confirm_title">Clear cached downloads?</string>
+    <string name="offline_clear_confirm_body">This deletes all songs you\'ve cached for offline playback. You can re-sync later.</string>
+    <string name="offline_clear_confirm_action">Clear</string>
+    <string name="action_cancel">Cancel</string>
+
+    <!-- Generic UI -->
+    <string name="action_retry">Retry</string>
+
+    <!-- Offline settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_subtitle">Manage your offline listening</string>
+    <string name="settings_aaos_subtitle">Offline favorites cache</string>
+    <string name="settings_offline_listening">Offline listening</string>
+    <string name="settings_offline_listening_on">Make your favorites available for offline playback</string>
+    <string name="settings_offline_listening_off">Turn on to make your favorites available offline</string>
+    <string name="settings_storage_limit">Storage limit</string>
+    <string name="settings_status_syncing">Syncing favorites now</string>
+    <string name="settings_status_synced">Last sync complete</string>
+    <string name="settings_status_waiting">Waiting for first sync</string>
+    <string name="settings_status_off">Offline listening is off</string>
+    <string name="settings_action_sync_now">Sync now</string>
+    <string name="settings_action_sync_short">Sync</string>
+    <string name="settings_action_syncing">Syncing</string>
+    <string name="settings_action_clear">Clear cached data</string>
+    <string name="settings_action_clear_short">Clear</string>
+    <string name="settings_used_label">%1$s used</string>
+    <string name="settings_used_of_quota">of %1$s</string>
+    <string name="settings_downloaded_count">%1$d favorites cached</string>
+    <string name="settings_size_mb">%1$d MB</string>
+    <string name="settings_size_gb">%1$d GB</string>
+</resources>

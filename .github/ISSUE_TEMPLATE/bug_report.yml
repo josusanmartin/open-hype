@@ -1,0 +1,55 @@
+name: Bug report
+description: Something doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Plain-English description; one or two sentences is fine.
+      placeholder: e.g. "Tapping a track from Search page 3 plays a single track instead of the page-3 queue."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: Steps that consistently produce the issue.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: From Settings → About, or the dist/ folder you installed from.
+      placeholder: e.g. 0.18.0
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Phone
+        - Android Auto (head unit)
+        - Automotive OS (AAOS emulator)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device / Android version
+      placeholder: e.g. Pixel 8 Pro, Android 15
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: |
+        If you can grab `adb logcat -s HypePlaybackManager OfflineRepository`, paste the relevant section.
+        Drop screenshots here too.
+      render: shell

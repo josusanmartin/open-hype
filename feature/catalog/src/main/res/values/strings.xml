@@ -1,0 +1,11 @@
+<resources>
+    <string name="catalog_action_retry">Retry</string>
+    <string name="catalog_empty_default">Nothing here yet.</string>
+    <string name="catalog_latest_title">Latest</string>
+    <string name="catalog_latest_subtitle">Discover fresh sounds and stories</string>
+    <string name="catalog_popular_title">Popular</string>
+    <string name="catalog_popular_subtitle">Hear what is rising right now</string>
+    <string name="catalog_unknown_artist">Unknown artist</string>
+    <string name="catalog_unknown_title">Unknown track</string>
+    <string name="catalog_unknown_blog">Unknown blog</string>
+</resources>

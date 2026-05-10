@@ -1,0 +1,33 @@
+# Gradle / Kotlin / IDE caches
+/.gradle
+/.idea
+/.kotlin
+/.bootstrap
+/.superpowers
+.kotlin/
+
+# Build outputs
+/build
+**/build
+**/bin
+captures
+*.apk
+*.aab
+*.aar
+
+# Local config + secrets
+local.properties
+*.keystore
+*.jks
+google-services.json
+
+# OS / editor
+**/.DS_Store
+*.iml
+
+# Working scratch
+/tmp
+/dist
+
+# Per-user CI / claude state
+/.claude

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "schedule": ["before 6am on Monday"],
+  "timezone": "Etc/UTC",
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "rangeStrategy": "pin",
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["gradle"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "gradle minor + patch",
+      "automerge": false
+    },
+    {
+      "matchPackagePatterns": ["^androidx.compose"],
+      "groupName": "androidx.compose"
+    },
+    {
+      "matchPackagePatterns": ["^androidx.media3"],
+      "groupName": "androidx.media3"
+    },
+    {
+      "matchPackagePatterns": ["^com.google.dagger"],
+      "groupName": "dagger / hilt"
+    },
+    {
+      "matchPackagePatterns": ["^org.jetbrains.kotlinx:kotlinx-coroutines"],
+      "groupName": "kotlinx coroutines"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["major-update"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "automerge": false
+  }
+}

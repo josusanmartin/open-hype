@@ -1,0 +1,15 @@
+<resources>
+    <string name="details_blog_default_title">Blog</string>
+    <plurals name="details_blog_followers">
+        <item quantity="one">%1$d follower</item>
+        <item quantity="other">%1$d followers</item>
+    </plurals>
+    <plurals name="details_blog_tracks">
+        <item quantity="one">%1$d track</item>
+        <item quantity="other">%1$d tracks</item>
+    </plurals>
+    <string name="details_user_default_title">Profile</string>
+    <string name="details_user_default_handle">Listener profile</string>
+    <string name="details_tag_subtitle">Tag flow</string>
+    <string name="details_tag_stat">Tagged cuts</string>
+</resources>

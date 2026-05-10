@@ -1,0 +1,35 @@
+# Release Checklist
+
+This app should be distributed as an Android App Bundle.
+
+## Signing
+
+Provide the release keystore through Gradle properties or environment variables. Do not commit the keystore or passwords.
+
+```bash
+export HYPE_RELEASE_STORE_FILE=/absolute/path/to/release.keystore
+export HYPE_RELEASE_STORE_PASSWORD='...'
+export HYPE_RELEASE_KEY_ALIAS='...'
+export HYPE_RELEASE_KEY_PASSWORD='...'
+```
+
+Then build the Play Store bundle:
+
+```bash
+./gradlew clean testDebugUnitTest lintDebug bundleRelease
+```
+
+The signed bundle is written to:
+
+```text
+app/build/outputs/bundle/release/app-release.aab
+```
+
+If the signing variables are not set, Gradle still produces an unsigned release artifact for local verification.
+
+## Store Review
+
+- Use neutral wording: this is an unofficial open-source Hype Machine client.
+- Complete Play Data Safety based on the actual app behavior: account username/token storage, network requests to Hype Machine, and playback metadata.
+- Do not claim affiliation with Hype Machine.
+- Re-run `./gradlew testDebugUnitTest lintDebug assembleRelease bundleRelease` before uploading.

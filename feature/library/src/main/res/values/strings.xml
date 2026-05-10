@@ -1,0 +1,21 @@
+<resources>
+    <string name="library_title">Library</string>
+    <string name="library_signed_out_blurb">Sign in to unlock saved tracks, feed drops, and playlists</string>
+    <string name="library_login_button">Login</string>
+    <string name="library_profile_button">Profile</string>
+    <string name="library_logout_button">Log out</string>
+
+    <string name="library_tab_favorites">Favorites</string>
+    <string name="library_tab_feed">Feed</string>
+    <string name="library_tab_playlists">Playlists</string>
+    <string name="library_tab_history">History</string>
+
+    <string name="library_subtitle_favorites">Your saved rotation and replayable finds</string>
+    <string name="library_subtitle_feed">A live stream from the people you follow</string>
+    <string name="library_subtitle_playlists">Curated stacks for different moods</string>
+    <string name="library_subtitle_history">The trail you have been on lately</string>
+
+    <string name="library_signed_out_card_title">Open your full library</string>
+    <string name="library_signed_out_card_body">Sign in to access %1$s, keep favorites synced, and carry the same queue into the car.</string>
+    <string name="library_signed_out_card_button">Sign in</string>
+</resources>

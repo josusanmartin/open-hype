@@ -1,0 +1,28 @@
+<resources>
+    <string name="player_idle">No se está reproduciendo nada.</string>
+    <string name="player_close">Cerrar reproductor</string>
+    <string name="player_collapse">Contraer</string>
+
+    <string name="player_action_play">Reproducir</string>
+    <string name="player_action_pause">Pausar</string>
+    <string name="player_action_previous">Anterior</string>
+    <string name="player_action_next">Siguiente</string>
+
+    <string name="player_action_favorite">Marcar como favorito</string>
+    <string name="player_action_unfavorite">Quitar de favoritos</string>
+
+    <string name="player_action_shuffle_enable">Activar modo aleatorio</string>
+    <string name="player_action_shuffle_disable">Desactivar modo aleatorio</string>
+
+    <string name="player_action_repeat_enable">Activar repetición</string>
+    <string name="player_action_repeat_one">Activar repetición de una</string>
+    <string name="player_action_repeat_disable">Desactivar repetición</string>
+
+    <string name="player_progress_label">Posición de reproducción</string>
+    <string name="player_error_skipped">No se pudo reproducir esa pista. Saltando.</string>
+    <string name="player_error_stopped">No se pudo reproducir esa pista.</string>
+    <string name="player_error_dismiss">Descartar</string>
+
+    <string name="player_top_bar_title">Reproduciendo</string>
+    <string name="player_more_actions">Más acciones</string>
+</resources>

@@ -1,0 +1,10 @@
+<resources>
+    <string name="auth_screen_title">Iniciar sesión</string>
+    <string name="auth_screen_blurb">Inicia sesión con tu cuenta de Hype Machine para acceder a favoritos, feed, listas de reproducción y reproducciones sincronizadas.</string>
+    <string name="auth_field_username">Usuario o correo</string>
+    <string name="auth_field_password">Contraseña</string>
+    <string name="auth_password_show">Mostrar</string>
+    <string name="auth_password_hide">Ocultar</string>
+    <string name="auth_button_login">Iniciar sesión</string>
+    <string name="auth_error_generic">Error al iniciar sesión.</string>
+</resources>

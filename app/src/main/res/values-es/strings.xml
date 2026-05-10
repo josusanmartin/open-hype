@@ -1,0 +1,49 @@
+<resources>
+    <string name="app_name">Open Hype</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_latest">Reciente</string>
+    <string name="nav_popular">Popular</string>
+    <string name="nav_library">Biblioteca</string>
+    <string name="nav_search">Buscar</string>
+    <string name="nav_settings">Ajustes</string>
+
+    <!-- Mini-player + transport controls -->
+    <string name="action_previous">Anterior</string>
+    <string name="action_play">Reproducir</string>
+    <string name="action_pause">Pausar</string>
+    <string name="action_next">Siguiente</string>
+    <string name="action_open_player">Abrir reproductor</string>
+
+    <!-- Offline settings -->
+    <string name="offline_clear_confirm_title">¿Borrar descargas guardadas?</string>
+    <string name="offline_clear_confirm_body">Esto elimina todas las canciones que has guardado para reproducir sin conexión. Puedes volver a sincronizar más tarde.</string>
+    <string name="offline_clear_confirm_action">Borrar</string>
+    <string name="action_cancel">Cancelar</string>
+
+    <!-- Generic UI -->
+    <string name="action_retry">Reintentar</string>
+
+    <!-- Offline settings -->
+    <string name="settings_title">Ajustes</string>
+    <string name="settings_subtitle">Gestiona tu escucha sin conexión</string>
+    <string name="settings_aaos_subtitle">Caché de favoritos sin conexión</string>
+    <string name="settings_offline_listening">Escucha sin conexión</string>
+    <string name="settings_offline_listening_on">Haz que tus favoritos estén disponibles sin conexión</string>
+    <string name="settings_offline_listening_off">Actívalo para tener tus favoritos disponibles sin conexión</string>
+    <string name="settings_storage_limit">Límite de almacenamiento</string>
+    <string name="settings_status_syncing">Sincronizando favoritos ahora</string>
+    <string name="settings_status_synced">Última sincronización completada</string>
+    <string name="settings_status_waiting">Esperando primera sincronización</string>
+    <string name="settings_status_off">La escucha sin conexión está desactivada</string>
+    <string name="settings_action_sync_now">Sincronizar ahora</string>
+    <string name="settings_action_sync_short">Sincronizar</string>
+    <string name="settings_action_syncing">Sincronizando</string>
+    <string name="settings_action_clear">Borrar datos guardados</string>
+    <string name="settings_action_clear_short">Borrar</string>
+    <string name="settings_used_label">%1$s usados</string>
+    <string name="settings_used_of_quota">de %1$s</string>
+    <string name="settings_downloaded_count">%1$d favoritos guardados</string>
+    <string name="settings_size_mb">%1$d MB</string>
+    <string name="settings_size_gb">%1$d GB</string>
+</resources>

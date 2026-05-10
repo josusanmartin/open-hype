@@ -1,0 +1,11 @@
+<resources>
+    <string name="search_title">Search</string>
+    <string name="search_subtitle_idle">Dial into scenes, blogs, and left-field finds</string>
+    <string name="search_subtitle_results">Results for "%1$s"</string>
+    <string name="search_empty_initial">Start with an artist, a track title, or one of the tags below.</string>
+    <string name="search_empty_no_results">No tracks matched that search yet.</string>
+    <string name="search_field_label">Search tracks</string>
+    <string name="search_button_go">Go</string>
+    <string name="search_top_tags">Top tags</string>
+    <string name="search_action_search">Search</string>
+</resources>

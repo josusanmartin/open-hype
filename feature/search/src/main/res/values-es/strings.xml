@@ -1,0 +1,11 @@
+<resources>
+    <string name="search_title">Buscar</string>
+    <string name="search_subtitle_idle">Sumérgete en escenas, blogs y descubrimientos alternativos</string>
+    <string name="search_subtitle_results">Resultados para "%1$s"</string>
+    <string name="search_empty_initial">Empieza con un artista, un título de pista o una de las etiquetas siguientes.</string>
+    <string name="search_empty_no_results">Ninguna pista coincide con esa búsqueda aún.</string>
+    <string name="search_field_label">Buscar pistas</string>
+    <string name="search_button_go">Ir</string>
+    <string name="search_top_tags">Etiquetas principales</string>
+    <string name="search_action_search">Buscar</string>
+</resources>

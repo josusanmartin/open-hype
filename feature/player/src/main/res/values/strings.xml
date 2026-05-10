@@ -1,0 +1,27 @@
+<resources>
+    <string name="player_idle">Nothing is playing.</string>
+    <string name="player_close">Close player</string>
+    <string name="player_collapse">Collapse</string>
+
+    <string name="player_action_play">Play</string>
+    <string name="player_action_pause">Pause</string>
+    <string name="player_action_previous">Previous</string>
+    <string name="player_action_next">Next</string>
+
+    <string name="player_action_favorite">Favorite</string>
+    <string name="player_action_unfavorite">Unfavorite</string>
+
+    <string name="player_action_shuffle_enable">Enable shuffle</string>
+    <string name="player_action_shuffle_disable">Disable shuffle</string>
+
+    <string name="player_action_repeat_enable">Enable repeat</string>
+    <string name="player_action_repeat_one">Enable repeat one</string>
+    <string name="player_action_repeat_disable">Disable repeat</string>
+
+    <string name="player_progress_label">Playback position</string>
+    <string name="player_error_skipped">Couldn\'t play that track. Skipping.</string>
+    <string name="player_error_stopped">Couldn\'t play that track.</string>
+    <string name="player_error_dismiss">Dismiss</string>
+    <string name="player_top_bar_title">Now Playing</string>
+    <string name="player_more_actions">More actions</string>
+</resources>

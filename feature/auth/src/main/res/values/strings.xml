@@ -1,0 +1,10 @@
+<resources>
+    <string name="auth_screen_title">Sign in</string>
+    <string name="auth_screen_blurb">Sign in with your Hype Machine account to unlock favorites, feed, playlists, and synced history.</string>
+    <string name="auth_field_username">Username or email</string>
+    <string name="auth_field_password">Password</string>
+    <string name="auth_password_show">Show</string>
+    <string name="auth_password_hide">Hide</string>
+    <string name="auth_button_login">Log in</string>
+    <string name="auth_error_generic">Login failed.</string>
+</resources>

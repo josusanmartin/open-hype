@@ -1,0 +1,21 @@
+<resources>
+    <string name="library_title">Biblioteca</string>
+    <string name="library_signed_out_blurb">Inicia sesión para acceder a pistas guardadas, novedades del feed y listas de reproducción</string>
+    <string name="library_login_button">Iniciar sesión</string>
+    <string name="library_profile_button">Perfil</string>
+    <string name="library_logout_button">Cerrar sesión</string>
+
+    <string name="library_tab_favorites">Favoritos</string>
+    <string name="library_tab_feed">Feed</string>
+    <string name="library_tab_playlists">Listas</string>
+    <string name="library_tab_history">Historial</string>
+
+    <string name="library_subtitle_favorites">Tu rotación guardada y descubrimientos repetibles</string>
+    <string name="library_subtitle_feed">Una transmisión en vivo de las personas a las que sigues</string>
+    <string name="library_subtitle_playlists">Selecciones cuidadas para diferentes estados de ánimo</string>
+    <string name="library_subtitle_history">El recorrido en el que has estado últimamente</string>
+
+    <string name="library_signed_out_card_title">Abre tu biblioteca completa</string>
+    <string name="library_signed_out_card_body">Inicia sesión para acceder a %1$s, mantener favoritos sincronizados y llevar la misma cola en el coche.</string>
+    <string name="library_signed_out_card_button">Iniciar sesión</string>
+</resources>
