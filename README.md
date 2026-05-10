@@ -23,9 +23,11 @@ Unofficial open-source Hype Machine client for Android phones and Android Auto /
 
 What you actually see in a car: the head unit's media app renders our `MediaLibraryService` through the AAOS Media Templates — same surface Spotify, YouTube Music, etc. use. Browse roots come from our `MediaLibrarySession.Callback`; the playback chrome is system-rendered.
 
-| Latest | Popular | Now Playing |
-| --- | --- | --- |
-| <img src="docs/screenshots/car-latest.png" width="280" alt="Templated Latest browse showing list rows for fresh tracks" /> | <img src="docs/screenshots/car-popular.png" width="280" alt="Templated Popular browse with chart-style track list" /> | <img src="docs/screenshots/car-player.png" width="280" alt="Templated Now Playing: artwork, title, artist, blog, transport controls" /> |
+| Latest | Popular | Now Playing | Signed-out Favorites |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/car-latest.png" width="280" alt="Templated Latest browse showing list rows for fresh tracks" /> | <img src="docs/screenshots/car-popular.png" width="280" alt="Templated Popular browse with chart-style track list" /> | <img src="docs/screenshots/car-player.png" width="280" alt="Templated Now Playing with the favorite heart button in the transport row" /> | <img src="docs/screenshots/car-favorites.png" width="280" alt="Favorites tab without a session shows a clean empty state instead of a system error" /> |
+
+The heart in the Now Playing transport row is a `CommandButton` wired to a custom `SessionCommand` — tapping it calls `MeRepository.toggleFavorite(...)` for the playing track, with optimistic UI and server-confirmed rollback. The Favorites/Feed/Playlists roots gate on `AuthRepository.session` and return a non-playable placeholder when there's no Hype Machine login, so the system shows "Media isn't available" instead of a generic error.
 
 > Captured by launching `com.android.car.media` with `-a android.car.intent.action.MEDIA_TEMPLATE` against `dev.josu.hypecar/dev.josu.hypecar.auto.service.HypeMediaLibraryService` on the AAOS_API_35 emulator.
 

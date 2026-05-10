@@ -4,6 +4,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaSession
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.auto.HypeMediaIds
+import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.LatestMode
@@ -13,13 +14,16 @@ import dev.josu.hypecar.core.model.SearchQuery
 import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
+import dev.josu.hypecar.core.model.repository.AuthRepository
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.OfflineDownloadStatus
 import dev.josu.hypecar.core.model.repository.OfflineRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,6 +35,7 @@ class HypeMediaLibraryCallbackMetadataTest {
         meRepository = EmptyMeRepository,
         searchRepository = EmptySearchRepository,
         offlineRepository = EmptyOfflineRepository,
+        authRepository = SignedInAuthRepository,
     )
 
     @Test
@@ -56,6 +61,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val items = failingCallback.privateLoadChildren(HypeMediaIds.latest, pageSize = 20)
@@ -70,6 +76,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val item = trackCallback.privateLoadItem(HypeMediaIds.track(sampleTrack.id))
@@ -87,6 +94,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val idOnlyItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(sampleTrack.id))
@@ -106,6 +114,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(secondTrack.id, HypeMediaIds.latest))
@@ -132,6 +141,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val mediaId = HypeMediaIds.track(
             id = "page2-1",
@@ -161,6 +171,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = SearchTracksRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(thirdTrack.id, HypeMediaIds.search("lunon")))
@@ -187,6 +198,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(sampleTrack.id, HypeMediaIds.latest, sourcePage = 99))
@@ -212,6 +224,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val prebuilt = MediaItem.Builder()
             .setMediaId("track:already-resolved")
@@ -233,6 +246,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
         val resolvedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track("only"))
@@ -257,6 +271,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.favorites)
@@ -273,6 +288,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = PlaylistsMeRepository(playlists = listOf(Playlist(id = 5, name = "Late nights"))),
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.playlist(5))
@@ -290,6 +306,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.playlist(999))
@@ -305,6 +322,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = SearchTracksRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val items = callback.privateLoadChildren(
@@ -324,6 +342,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = PlaylistTracksMeRepository(tracks = listOf(sampleTrack, secondTrack)),
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val items = callback.privateLoadChildren(
@@ -344,6 +363,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             ),
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val items = callback.privateLoadChildren(
@@ -364,6 +384,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
         )
 
         val items = callback.privateLoadChildren(parentId = "totally:unknown", pageSize = 20)
@@ -540,6 +561,18 @@ private object EmptySearchRepository : SearchRepository {
 private object SearchTracksRepository : SearchRepository {
     override suspend fun searchTracks(query: SearchQuery, page: Int, count: Int): List<Track> =
         listOf(secondTrack, thirdTrack)
+}
+
+private object SignedInAuthRepository : AuthRepository {
+    override val session: Flow<AuthSession?> = flowOf(AuthSession(username = "tester", token = "tok"))
+    override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
+    override suspend fun logout() = Unit
+}
+
+private object SignedOutAuthRepository : AuthRepository {
+    override val session: Flow<AuthSession?> = flowOf(null)
+    override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
+    override suspend fun logout() = Unit
 }
 
 private object EmptyOfflineRepository : OfflineRepository {
