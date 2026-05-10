@@ -70,6 +70,11 @@ class HypeMediaLibraryCallback @Inject constructor(
             .setDisplayName(if (filled) "Unfavorite" else "Favorite")
             .setIconResId(if (filled) R.drawable.ic_auto_favorite else R.drawable.ic_auto_favorite_border)
             .setSessionCommand(SessionCommand(ActionToggleFavorite, Bundle.EMPTY))
+            // Without an explicit slot, AAOS placed the heart in SLOT_FORWARD and
+            // pushed skip-next off the Now Playing transport row. SLOT_OVERFLOW
+            // routes it to the secondary action area so the standard transport
+            // (prev / play-pause / next) stays intact.
+            .setSlots(CommandButton.SLOT_OVERFLOW)
             .build()
 
     override fun onConnect(
