@@ -36,6 +36,7 @@ class HypeMediaLibraryCallbackMetadataTest {
         searchRepository = EmptySearchRepository,
         offlineRepository = EmptyOfflineRepository,
         authRepository = SignedInAuthRepository,
+        okHttpClient = TestOkHttpClient,
     )
 
     @Test
@@ -62,6 +63,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val items = failingCallback.privateLoadChildren(HypeMediaIds.latest, pageSize = 20)
@@ -77,6 +79,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val item = trackCallback.privateLoadItem(HypeMediaIds.track(sampleTrack.id))
@@ -95,6 +98,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val idOnlyItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(sampleTrack.id))
@@ -115,6 +119,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(secondTrack.id, HypeMediaIds.latest))
@@ -142,6 +147,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val mediaId = HypeMediaIds.track(
             id = "page2-1",
@@ -172,6 +178,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = SearchTracksRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(thirdTrack.id, HypeMediaIds.search("lunon")))
@@ -199,6 +206,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(sampleTrack.id, HypeMediaIds.latest, sourcePage = 99))
@@ -225,6 +233,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val prebuilt = MediaItem.Builder()
             .setMediaId("track:already-resolved")
@@ -247,6 +256,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
         val resolvedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track("only"))
@@ -272,6 +282,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.favorites)
@@ -289,6 +300,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.playlist(5))
@@ -307,6 +319,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.playlist(999))
@@ -323,6 +336,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = SearchTracksRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(
@@ -343,6 +357,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(
@@ -364,6 +379,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(
@@ -385,6 +401,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(parentId = "totally:unknown", pageSize = 20)
@@ -635,3 +652,5 @@ private class PlaylistTracksMeRepository(
     override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
+
+private val TestOkHttpClient: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder().build()

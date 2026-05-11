@@ -45,6 +45,7 @@ class HypeMediaLibraryCallback @Inject constructor(
     private val searchRepository: SearchRepository,
     private val offlineRepository: OfflineRepository,
     private val authRepository: AuthRepository,
+    private val okHttpClient: okhttp3.OkHttpClient,
 ) : MediaLibrarySession.Callback {
     private companion object {
         const val DefaultPageSize = 20
@@ -232,18 +233,44 @@ class HypeMediaLibraryCallback @Inject constructor(
                     HypeMediaIds.parseTrackId(item.mediaId) == selectedTrackId
                 }
                 if (selectedIndex >= 0) {
-                    return MediaItemsWithStartPosition(sourceQueue, selectedIndex, startPositionMs)
+                    val withArtwork = sourceQueue.toMutableList().also {
+                        it[selectedIndex] = withInlineArtwork(it[selectedIndex])
+                    }
+                    return MediaItemsWithStartPosition(withArtwork, selectedIndex, startPositionMs)
                 }
             }
         }
 
-        val resolvedItems = resolveMediaItemsSuspend(mediaItems)
+        val resolvedItems = resolveMediaItemsSuspend(mediaItems).toMutableList()
         val resolvedStartIndex = if (resolvedItems.isEmpty()) {
             0
         } else {
             startIndex.coerceIn(0, resolvedItems.lastIndex)
         }
+        if (resolvedItems.isNotEmpty()) {
+            // Prefetch artwork only for the item that's about to play; the rest stay
+            // URI-only. The Player.Listener re-fetches on track transitions.
+            resolvedItems[resolvedStartIndex] = withInlineArtwork(resolvedItems[resolvedStartIndex])
+        }
         return MediaItemsWithStartPosition(resolvedItems, resolvedStartIndex, startPositionMs)
+    }
+
+    /**
+     * Pre-fetches the artwork URI via OkHttp and embeds the bytes inline as
+     * `MediaMetadata.artworkData` so the AAOS Now Playing surface doesn't have
+     * to do its own HTTPS fetch (which fails on stripped trust stores like the
+     * AAOS_API_35 emulator). Falls back silently to URI-only on failure.
+     */
+    private suspend fun withInlineArtwork(item: MediaItem): MediaItem {
+        val uri = item.mediaMetadata.artworkUri ?: return item
+        val bytes = runSuspendCatchingPreservingCancellation {
+            val request = okhttp3.Request.Builder().url(uri.toString()).build()
+            okHttpClient.newCall(request).execute().use { resp -> resp.body?.bytes() }
+        }.getOrNull() ?: return item
+        val updated = item.mediaMetadata.buildUpon()
+            .setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+            .build()
+        return item.buildUpon().setMediaMetadata(updated).build()
     }
 
     private suspend fun loadPlaylistItem(mediaId: String): MediaItem? =
