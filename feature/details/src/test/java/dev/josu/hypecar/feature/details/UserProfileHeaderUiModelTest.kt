@@ -19,7 +19,10 @@ class UserProfileHeaderUiModelTest {
 
         assertThat(model.title).isEqualTo("JSMDN")
         assertThat(model.handle).isEqualTo("@JSMDN")
-        assertThat(model.stats).containsExactly("123 favorites", "456 followers", "78 following").inOrder()
-        assertThat(model.summaryLine).isEqualTo("123 favorites · 456 followers · 78 following")
+        // Raw counts only — the composable formats them with
+        // pluralStringResource so translations and pluralisation work.
+        assertThat(model.favoritesCount).isEqualTo(123)
+        assertThat(model.followersCount).isEqualTo(456)
+        assertThat(model.followingCount).isEqualTo(78)
     }
 }

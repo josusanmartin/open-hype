@@ -126,7 +126,24 @@ jobs:
       - name: Permission for gradlew
         run: chmod +x gradlew
 
-      - name: Assemble release APK + AAB (unsigned)
+      - name: Restore release keystore
+        env:
+          HYPE_RELEASE_KEYSTORE_BASE64: ${{ secrets.HYPE_RELEASE_KEYSTORE_BASE64 }}
+          HYPE_RELEASE_STORE_FILE_SECRET: ${{ secrets.HYPE_RELEASE_STORE_FILE }}
+        run: |
+          if [ -n "$HYPE_RELEASE_KEYSTORE_BASE64" ]; then
+            mkdir -p "$RUNNER_TEMP/hype-signing"
+            printf '%s' "$HYPE_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/hype-signing/release.jks"
+            echo "HYPE_RELEASE_STORE_FILE=$RUNNER_TEMP/hype-signing/release.jks" >> "$GITHUB_ENV"
+          elif [ -n "$HYPE_RELEASE_STORE_FILE_SECRET" ]; then
+            echo "HYPE_RELEASE_STORE_FILE=$HYPE_RELEASE_STORE_FILE_SECRET" >> "$GITHUB_ENV"
+          fi
+
+      - name: Assemble signed release APK + AAB
+        env:
+          HYPE_RELEASE_STORE_PASSWORD: ${{ secrets.HYPE_RELEASE_STORE_PASSWORD }}
+          HYPE_RELEASE_KEY_ALIAS: ${{ secrets.HYPE_RELEASE_KEY_ALIAS }}
+          HYPE_RELEASE_KEY_PASSWORD: ${{ secrets.HYPE_RELEASE_KEY_PASSWORD }}
         run: ./gradlew --no-daemon :app:assembleRelease :app:bundleRelease
 
       - name: Upload release artifacts

@@ -10,10 +10,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.CatalogRepository
-import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
 import kotlinx.coroutines.Job
@@ -28,7 +28,7 @@ import javax.inject.Inject
 class PopularViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val playbackRepository: PlaybackRepository,
-    private val meRepository: MeRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
 ) : ViewModel() {
     private val modes = PopularMode.entries
     private val _state = MutableStateFlow(CatalogScreenState())
@@ -38,6 +38,13 @@ class PopularViewModel @Inject constructor(
 
     init {
         refresh()
+        viewModelScope.launch {
+            favoriteSyncManager.edits.collect { edit ->
+                _state.update { current ->
+                    current.copy(tracks = favoriteSyncManager.applyTo(current.tracks, edit))
+                }
+            }
+        }
     }
 
     fun selectMode(index: Int) {
@@ -53,33 +60,7 @@ class PopularViewModel @Inject constructor(
     }
 
     fun toggleFavorite(track: Track) {
-        val newLoved = !track.isLoved
-        _state.update { current ->
-            current.copy(
-                tracks = current.tracks.map {
-                    if (it.id == track.id) {
-                        it.copy(
-                            isLoved = newLoved,
-                            lovedCount = (it.lovedCount + if (newLoved) 1 else -1).coerceAtLeast(0),
-                        )
-                    } else {
-                        it
-                    }
-                },
-            )
-        }
-        viewModelScope.launch {
-            val confirmed = meRepository.toggleFavorite(track.id)
-            if (confirmed != null && confirmed != newLoved) {
-                _state.update { current ->
-                    current.copy(
-                        tracks = current.tracks.map {
-                            if (it.id == track.id) it.copy(isLoved = confirmed) else it
-                        },
-                    )
-                }
-            }
-        }
+        favoriteSyncManager.toggle(track)
     }
 
     fun pullToRefresh() {
@@ -182,13 +163,12 @@ fun PopularRoute(
         chips = PopularMode.entries.map { it.displayLabel },
         selectedChipIndex = state.selectedIndex,
         onChipSelected = viewModel::selectMode,
-        onUtilityClick = {
-            val next = (state.selectedIndex + 1) % PopularMode.entries.size
-            viewModel.selectMode(next)
-        },
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
         onToggleFavorite = viewModel::toggleFavorite,
+        // Wires the Retry button rendered by TrackListBody on error. See the
+        // matching note in LatestRoute.
+        onRetry = viewModel::pullToRefresh,
         onLoadMore = viewModel::loadMore,
         hasMore = state.hasMore,
         onRefresh = viewModel::pullToRefresh,

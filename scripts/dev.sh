@@ -2,11 +2,11 @@
 # Common dev shortcuts. Run from repo root.
 #
 #   scripts/dev.sh check       # the same gates CI runs (fast-fail)
-#   scripts/dev.sh ci          # full CI pipeline locally
+#   scripts/dev.sh ci          # full test/lint/coverage pipeline locally
 #   scripts/dev.sh format      # spotlessApply
 #   scripts/dev.sh coverage    # generate Kover HTML and print a one-line summary
 #   scripts/dev.sh install     # build + adb install the debug APK
-#   scripts/dev.sh release     # build release APK + AAB into dist/<version>/
+#   scripts/dev.sh release     # build signed release APK + AAB into dist/<version>/
 #
 set -euo pipefail
 
@@ -25,7 +25,7 @@ cmd_ci() {
         testDebugUnitTest testReleaseUnitTest \
         lintDebug lintRelease \
         koverHtmlReport koverXmlReport koverVerify \
-        :app:assembleDebug :app:assembleRelease :app:bundleRelease
+        :app:assembleDebug
 }
 
 cmd_format() {
@@ -66,13 +66,19 @@ cmd_release() {
     fi
     echo "Building release artifacts for $version..."
     $GRADLE :app:assembleDebug :app:assembleRelease :app:bundleRelease
+    local release_apk="app/build/outputs/apk/release/app-release.apk"
+    local release_aab="app/build/outputs/bundle/release/app-release.aab"
+    if [ ! -f "$release_apk" ] || [ ! -f "$release_aab" ]; then
+        echo "Signed release outputs were not found. Check release signing configuration." >&2
+        exit 1
+    fi
     mkdir -p "dist/$version"
     cp app/build/outputs/apk/debug/app-debug.apk \
         "dist/$version/hype-car-$version-debug-installable.apk"
-    cp app/build/outputs/apk/release/app-release-unsigned.apk \
-        "dist/$version/hype-car-$version-release-unsigned.apk"
-    cp app/build/outputs/bundle/release/app-release.aab \
-        "dist/$version/hype-car-$version-release-unsigned.aab"
+    cp "$release_apk" \
+        "dist/$version/hype-car-$version-release.apk"
+    cp "$release_aab" \
+        "dist/$version/hype-car-$version-release.aab"
     echo "Staged dist/$version/"
     ls -lh "dist/$version/"
 }

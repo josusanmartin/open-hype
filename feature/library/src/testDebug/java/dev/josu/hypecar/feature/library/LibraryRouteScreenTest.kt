@@ -1,6 +1,5 @@
 package dev.josu.hypecar.feature.library
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -8,6 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.FeedMode
@@ -17,6 +17,7 @@ import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.AuthRepository
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
+import dev.josu.hypecar.core.ui.HypeTheme
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +38,7 @@ class LibraryRouteScreenTest {
     fun `signed-out state shows the sign-in card and Login utility`() {
         var loginTapped = false
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     LibraryRoute(
                         onBlogClick = {},
@@ -47,6 +48,7 @@ class LibraryRouteScreenTest {
                             authRepository = SignedOutAuth(),
                             meRepository = EmptyMe,
                             playbackRepository = NoOpPlayback,
+                            favoriteSyncManager = FavoriteSyncManager(EmptyMe),
                         ),
                     )
                 }
@@ -63,8 +65,9 @@ class LibraryRouteScreenTest {
 
     @Test
     fun `signed-in favorites tab renders track titles`() {
+        val me = StaticMe(favorites = listOf(track("a", "Alpha"), track("b", "Beta")))
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     LibraryRoute(
                         onBlogClick = {},
@@ -72,8 +75,9 @@ class LibraryRouteScreenTest {
                         onLoginClick = {},
                         viewModel = LibraryViewModel(
                             authRepository = SignedInAuth(),
-                            meRepository = StaticMe(favorites = listOf(track("a", "Alpha"), track("b", "Beta"))),
+                            meRepository = me,
                             playbackRepository = NoOpPlayback,
+                            favoriteSyncManager = FavoriteSyncManager(me),
                         ),
                     )
                 }

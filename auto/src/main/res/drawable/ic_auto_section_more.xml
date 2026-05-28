@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- More: three dots / grid over warm fill. -->
+    <path
+        android:fillColor="#FFE8DED0"
+        android:pathData="M0,0h96v96h-96z" />
+    <path
+        android:fillColor="#FF1F2226"
+        android:pathData="M28,48 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0 Z M48,48 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0 Z M68,48 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0 Z" />
+</vector>

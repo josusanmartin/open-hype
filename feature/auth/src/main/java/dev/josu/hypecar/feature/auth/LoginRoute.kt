@@ -39,8 +39,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -48,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.josu.hypecar.core.ui.pressFeedback
 
 @Composable
 fun LoginRoute(
@@ -138,6 +141,7 @@ fun LoginRoute(
                         color = Color(0xFFD55A20),
                         style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier
+                            .pressFeedback(pressedScale = 0.94f, label = "passwordVisibilityPress")
                             .clickable { showPassword = !showPassword }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     )
@@ -158,6 +162,7 @@ fun LoginRoute(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(62.dp)
+                    .pressFeedback(enabled = canSubmit, pressedScale = 0.97f, label = "loginButtonPress")
                     .padding(top = 8.dp),
                 shape = RoundedCornerShape(999.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -218,13 +223,26 @@ private fun loginTextFieldColors() =
         cursorColor = Color(0xFFD55A20),
     )
 
+/**
+ * Decorative background art for the login screen. The text inside the
+ * circle ("offline / rotation / synced") is purely visual flair and is
+ * marked `clearAndSetSemantics {}` so TalkBack doesn't read it out as if it
+ * were meaningful UI copy.
+ *
+ * Offsets used to be in raw `x = 170.dp` form which doesn't mirror under
+ * RTL — the circle stuck to the right edge of the screen in Arabic / Hebrew
+ * regardless of layout direction. We now mirror the offsets when the layout
+ * direction is RTL so the decorative orbs sit on the leading side.
+ */
 @Composable
 private fun LoginBackgroundArt() {
+    val isRtl = LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+    val mirror = if (isRtl) -1 else 1
     Box(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
                 .size(360.dp)
-                .offset(x = 170.dp, y = (-86).dp)
+                .offset(x = (170 * mirror).dp, y = (-86).dp)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
@@ -239,7 +257,7 @@ private fun LoginBackgroundArt() {
         Box(
             modifier = Modifier
                 .size(220.dp)
-                .offset(x = 248.dp, y = 74.dp)
+                .offset(x = (248 * mirror).dp, y = 74.dp)
                 .clip(CircleShape)
                 .border(1.dp, Color(0x35FFFFFF), CircleShape),
         ) {
@@ -257,7 +275,11 @@ private fun LoginBackgroundArt() {
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 24.dp),
+                    .padding(end = 24.dp)
+                    // Decorative flavour text — hide from screen readers so
+                    // TalkBack doesn't announce "offline, rotation, synced"
+                    // as if it were meaningful UI.
+                    .clearAndSetSemantics { },
             )
         }
         Box(

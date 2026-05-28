@@ -25,4 +25,7 @@
 
     <string name="player_top_bar_title">Reproduciendo</string>
     <string name="player_more_actions">Más acciones</string>
+    <string name="player_up_next">A continuación</string>
+    <string name="player_queue_empty">La cola está vacía.</string>
+    <string name="player_track_in_queue_a11y">%1$s de %2$s. Tocar para reproducir.</string>
 </resources>

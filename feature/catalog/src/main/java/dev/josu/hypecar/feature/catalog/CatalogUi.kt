@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -55,6 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 
 internal data class CatalogLayoutMetrics(
     val contentBottomPadding: Dp,
@@ -194,6 +202,10 @@ fun TrackListContent(
     onTrackClick: (Int) -> Unit,
     onBlogClick: (Track) -> Unit,
     onToggleFavorite: ((Track) -> Unit)? = null,
+    // Forwarded to TrackListBody so the Retry button shown on error actually
+    // triggers a reload. Callers that omit this still render the message but
+    // the button stays hidden (rather than rendering a dead control).
+    onRetry: (() -> Unit)? = null,
     onLoadMore: (() -> Unit)? = null,
     hasMore: Boolean = false,
     onRefresh: (() -> Unit)? = null,
@@ -226,6 +238,7 @@ fun TrackListContent(
             emphasizeFirstItem = true,
             onTrackClick = onTrackClick,
             onBlogClick = onBlogClick,
+            onRetry = onRetry,
             onToggleFavorite = onToggleFavorite,
             onLoadMore = onLoadMore,
             hasMore = hasMore,
@@ -290,14 +303,12 @@ fun TrackListBody(
 
             when {
                 isLoading && tracks.isEmpty() -> {
-                    item(key = "loading") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            CircularProgressIndicator()
+                    // Skeleton placeholders match the eventual list shape, so
+                    // the user gets a sense of layout instead of a centred
+                    // spinner pasted onto a blank screen.
+                    repeat(6) { idx ->
+                        item(key = "skeleton-$idx") {
+                            dev.josu.hypecar.core.ui.SkeletonTrackRow()
                         }
                     }
                 }
@@ -405,7 +416,7 @@ fun TrackRow(
     val cardOuterHorizontalPadding = metrics.cardOuterHorizontalPadding
     val cardOuterVerticalPadding = metrics.cardOuterVerticalPadding
     val rowSpacing = metrics.rowSpacing
-    val statsColor = if (featured) Color(0xFFE0D7CF) else Color(0xFF6B5B53)
+    val statsColor = if (featured) Color(0xFFE0D7CF) else hypeTokens.cards.onSurfaceMuted
     val titleStyle = if (isAutomotive) {
         MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
     } else {
@@ -413,12 +424,12 @@ fun TrackRow(
     }
     val artistStyle = if (isAutomotive) {
         MaterialTheme.typography.bodyLarge.copy(
-            color = if (featured) Color(0xFFFF934A) else Color(0xFFC85F27),
+            color = if (featured) hypeTokens.brand.primary else hypeTokens.brand.primaryDeep,
             fontWeight = FontWeight.SemiBold,
         )
     } else {
         MaterialTheme.typography.titleMedium.copy(
-            color = if (featured) Color(0xFFFF934A) else Color(0xFFC85F27),
+            color = if (featured) hypeTokens.brand.primary else hypeTokens.brand.primaryDeep,
         )
     }
     val descriptionStyle = if (isAutomotive) {
@@ -440,6 +451,10 @@ fun TrackRow(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = cardOuterHorizontalPadding, vertical = cardOuterVerticalPadding)
+            .pressFeedback(
+                pressedScale = if (featured) 0.985f else 0.99f,
+                label = "trackRowPress",
+            )
             .clickable(onClick = onTrackClick),
         color = if (featured) Color(0xFF101010) else Color(0xFFF9F4EE),
         shape = cardShape,
@@ -491,13 +506,33 @@ fun TrackRow(
                     }
                 }
                 if (onToggleFavorite != null) {
-                    val favColor = Color(0xFFFF6A21)
+                    val favColor = hypeTokens.brand.primaryStrong
+                    val favoriteContentDescription = stringResource(
+                        if (track.isLoved) {
+                            R.string.catalog_action_unfavorite
+                        } else {
+                            R.string.catalog_action_favorite
+                        },
+                    )
                     Box(
                         modifier = Modifier
                             .size(if (isAutomotive) 28.dp else 32.dp)
                             .clip(CircleShape)
                             .background(if (track.isLoved) Color(0x33FF6A21) else Color.Transparent)
-                            .clickable(onClick = onToggleFavorite),
+                            .pressFeedback(pressedScale = 0.90f, label = "trackFavoritePress")
+                            .clickable(
+                                onClickLabel = favoriteContentDescription,
+                                role = Role.Button,
+                                onClick = onToggleFavorite,
+                            )
+                            .clearAndSetSemantics {
+                                contentDescription = favoriteContentDescription
+                                role = Role.Button
+                                onClick(label = favoriteContentDescription) {
+                                    onToggleFavorite()
+                                    true
+                                }
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -525,8 +560,17 @@ fun TrackRow(
                         tint = Color(0xFFE53935),
                         modifier = Modifier.size(14.dp),
                     )
+                    // Stats line composed via pluralStringResource so that
+                    // translations and pluralization (1 loved / N loved) are
+                    // handled correctly. The model carries raw counts now.
+                    val statsText = androidx.compose.ui.res.pluralStringResource(
+                        id = R.plurals.track_row_stats,
+                        count = model.lovedCount,
+                        model.lovedCount,
+                        model.postedCount,
+                    )
                     Text(
-                        text = model.statsLine,
+                        text = statsText,
                         style = if (isAutomotive) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
                         color = statsColor,
                         maxLines = 1,
@@ -568,9 +612,10 @@ fun TrackRow(
                                 .clip(sourceChipShape)
                                 .border(
                                     1.dp,
-                                    if (featured) Color(0xFFFF934A) else Color(0xFFDC8D54),
+                                    if (featured) hypeTokens.brand.primary else Color(0xFFDC8D54),
                                     sourceChipShape,
                                 )
+                                .pressFeedback(pressedScale = 0.96f, label = "trackSourcePress")
                                 .clickable(onClick = onBlogClick)
                                 .padding(horizontal = sourceChipPaddingH, vertical = sourceChipPaddingV),
                         ) {
@@ -578,7 +623,7 @@ fun TrackRow(
                                 text = model.sourceLabel.ifBlank { unknownBlog },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                color = if (featured) Color(0xFFFF934A) else Color(0xFFC85F27),
+                                color = if (featured) hypeTokens.brand.primary else hypeTokens.brand.primaryDeep,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
@@ -591,6 +636,7 @@ fun TrackRow(
                     } else {
                         Surface(
                             onClick = onTrackClick,
+                            modifier = Modifier.pressFeedback(pressedScale = 0.92f, label = "trackPlayPress"),
                             shape = playShape,
                             color = Color.Transparent,
                         ) {
@@ -607,7 +653,7 @@ fun TrackRow(
                             ) {
                                 Icon(
                                     imageVector = androidx.compose.material.icons.Icons.Default.PlayArrow,
-                                    contentDescription = "Play",
+                                    contentDescription = stringResource(R.string.catalog_action_play),
                                     tint = if (featured) Color.White else Color(0xFF5C5C5C),
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -634,13 +680,14 @@ private fun CompactAutomotivePlayButton(
                 if (featured) Color.White else Color(0xFF8A8A8A),
                 shape,
             )
+            .pressFeedback(pressedScale = 0.92f, label = "compactTrackPlayPress")
             .clickable(onClick = onClick)
             .padding(4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = Icons.Default.PlayArrow,
-            contentDescription = "Play",
+            contentDescription = stringResource(R.string.catalog_action_play),
             tint = if (featured) Color.White else Color(0xFF5C5C5C),
             modifier = Modifier.size(14.dp),
         )
@@ -657,7 +704,9 @@ fun EditorialHeroHeader(
     onChipSelected: (Int) -> Unit,
     onUtilityClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
-    utilityLabel: String = "Filter",
+    // Default pulls from string resources so callers that don't override the
+    // label still get a localised "Filter" / "Filtrar" instead of hardcoded English.
+    utilityLabel: String = stringResource(R.string.catalog_action_filter),
     height: Dp = 258.dp,
     titleSize: TextUnit = 44.sp,
     titleLineHeight: TextUnit = 44.sp,
@@ -743,6 +792,10 @@ fun EditorialHeroHeader(
                 if (onUtilityClick != null) {
                     Surface(
                         onClick = onUtilityClick,
+                        modifier = Modifier.pressFeedback(
+                            pressedScale = 0.95f,
+                            label = "heroUtilityPress",
+                        ),
                         shape = RoundedCornerShape(metrics.utilityCornerRadius),
                         color = Color(0xAA572313),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x77FFE2C9)),
@@ -801,9 +854,15 @@ fun EditorialHeroHeader(
                 ) {
                     chips.forEachIndexed { index, chip ->
                         val selected = index == selectedChipIndex
+                        val interactionSource = remember { MutableInteractionSource() }
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { onChipSelected(index) },
+                            modifier = Modifier
+                                .pressFeedback(pressedScale = 0.95f, label = "heroChipPress")
+                                .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = null,
+                                ) { onChipSelected(index) },
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
@@ -815,7 +874,7 @@ fun EditorialHeroHeader(
                                         horizontal = metrics.heroChipHorizontalPadding,
                                         vertical = metrics.heroChipVerticalPadding,
                                     ),
-                                    color = if (selected) Color(0xFFC85F27) else Color.White,
+                                    color = if (selected) hypeTokens.brand.primaryDeep else Color.White,
                                     style = if (compactMode) {
                                         MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                                     } else {
@@ -922,6 +981,10 @@ private fun AutomotiveEditorialHeroHeader(
                 if (onUtilityClick != null) {
                     Surface(
                         onClick = onUtilityClick,
+                        modifier = Modifier.pressFeedback(
+                            pressedScale = 0.95f,
+                            label = "automotiveHeroUtilityPress",
+                        ),
                         shape = RoundedCornerShape(metrics.utilityCornerRadius),
                         color = Color(0xAA572313),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x77FFE2C9)),
@@ -958,6 +1021,7 @@ private fun AutomotiveEditorialHeroHeader(
                 ) {
                     chips.forEachIndexed { index, chip ->
                         val selected = index == selectedChipIndex
+                        val interactionSource = remember { MutableInteractionSource() }
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
@@ -973,7 +1037,11 @@ private fun AutomotiveEditorialHeroHeader(
                                         )
                                     },
                                 )
-                                .clickable { onChipSelected(index) },
+                                .pressFeedback(pressedScale = 0.95f, label = "automotiveHeroChipPress")
+                                .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = null,
+                                ) { onChipSelected(index) },
                         ) {
                             Text(
                                 text = chip,
@@ -981,7 +1049,7 @@ private fun AutomotiveEditorialHeroHeader(
                                     horizontal = metrics.heroChipHorizontalPadding,
                                     vertical = metrics.heroChipVerticalPadding,
                                 ),
-                                color = if (selected) Color(0xFFC85F27) else Color.White,
+                                color = if (selected) hypeTokens.brand.primaryDeep else Color.White,
                                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,

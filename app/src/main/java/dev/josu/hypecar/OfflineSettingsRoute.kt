@@ -50,6 +50,8 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.josu.hypecar.core.model.repository.OfflineDownloadStatus
 import dev.josu.hypecar.core.model.repository.OfflineRepository
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -390,6 +392,7 @@ private fun CompactQuotaOption(
             .clip(shape)
             .background(if (selected) Color(0xFFEBDDFF) else Color.Transparent)
             .border(1.dp, if (selected) Color(0xFFEBDDFF) else Color(0xFF756D7A), shape)
+            .pressFeedback(enabled = enabled, pressedScale = 0.95f, label = "compactQuotaPress")
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
@@ -419,7 +422,7 @@ private fun CompactActionButton(
             .background(
                 when {
                     !enabled -> Color(0xFF201A18)
-                    primary -> Color(0xFFFF8A3D)
+                    primary -> hypeTokens.brand.primary
                     else -> Color.Transparent
                 },
             )
@@ -428,6 +431,7 @@ private fun CompactActionButton(
                 if (primary) Color.Transparent else Color(0xFF8D8492),
                 shape,
             )
+            .pressFeedback(enabled = enabled, pressedScale = 0.96f, label = "compactActionPress")
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 7.dp),
     ) {
@@ -480,7 +484,7 @@ private fun OfflineListeningPanel(
                 onCheckedChange = onEnabledChange,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
-                    checkedTrackColor = Color(0xFFFF8A3D),
+                    checkedTrackColor = hypeTokens.brand.primary,
                     uncheckedThumbColor = Color(0xFFE2DAD3),
                     uncheckedTrackColor = Color(0xFF3A3330),
                     uncheckedBorderColor = Color(0xFF4F4744),
@@ -506,10 +510,10 @@ private fun OfflineListeningPanel(
                 style = MaterialTheme.typography.titleSmall,
             )
         }
-        QuotaSlider(
-            quotaBytes = model.quotaBytes,
+        QuotaPillRow(
+            selectedQuotaBytes = model.quotaBytes,
             enabled = model.enabled,
-            onQuotaChanged = onQuotaSelected,
+            onQuotaSelected = onQuotaSelected,
         )
 
         StorageUsageCard(model = model)
@@ -542,39 +546,68 @@ private fun OfflineListeningPanel(
 }
 
 @Composable
+private fun QuotaPillRow(
+    selectedQuotaBytes: Long,
+    enabled: Boolean,
+    onQuotaSelected: (Long) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OfflineQuotaOptions.forEach { quota ->
+            StorageLimitPill(
+                label = formatBytesLabel(quota),
+                selected = selectedQuotaBytes == quota,
+                enabled = enabled,
+                onClick = { onQuotaSelected(quota) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
 private fun StorageLimitPill(
     label: String,
     selected: Boolean,
     enabled: Boolean,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(12.dp)
     Box(
         modifier = modifier
-            .height(46.dp)
             .clip(shape)
-            .background(if (selected) Color(0x1FFF8A3D) else Color.Transparent)
+            .background(
+                when {
+                    selected -> Color(0x1AFF8A47)
+                    else -> Color.Transparent
+                },
+            )
             .border(
                 width = 1.dp,
                 color = when {
-                    selected -> Color(0xFFFF8A3D)
-                    enabled -> Color(0xFF595553)
-                    else -> Color(0xFF383533)
+                    selected -> hypeTokens.brand.primary
+                    enabled -> Color(0xFF4E4742)
+                    else -> Color(0xFF2E2926)
                 },
                 shape = shape,
             )
-            .clickable(enabled = enabled, onClick = onClick),
+            .pressFeedback(enabled = enabled, pressedScale = 0.96f, label = "quotaPillPress")
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             color = when {
-                selected -> Color(0xFFFF9B62)
-                enabled -> Color(0xFFC7C1BC)
-                else -> Color(0xFF59524E)
+                selected -> Color(0xFFFFA06A)
+                enabled -> Color(0xFFD8D0CA)
+                else -> Color(0xFF665E58)
             },
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
         )
     }
 }
@@ -624,33 +657,6 @@ private fun StorageUsageCard(model: OfflineSettingsUiModel) {
 }
 
 @Composable
-private fun QuotaSlider(
-    quotaBytes: Long,
-    enabled: Boolean,
-    onQuotaChanged: (Long) -> Unit,
-) {
-    val minMb = 100f
-    val maxMb = 2048f
-    val currentMb = (quotaBytes / 1024L / 1024L).toFloat().coerceIn(minMb, maxMb)
-    androidx.compose.material3.Slider(
-        value = currentMb,
-        onValueChange = { mb ->
-            // Snap to nearest 50 MB step for smoother feel.
-            val snapped = (mb / 50f).toInt() * 50L
-            val newBytes = snapped.coerceAtLeast(100L) * 1024L * 1024L
-            onQuotaChanged(newBytes)
-        },
-        valueRange = minMb..maxMb,
-        enabled = enabled,
-        colors = androidx.compose.material3.SliderDefaults.colors(
-            thumbColor = Color(0xFFFF8A3D),
-            activeTrackColor = Color(0xFFFF8A3D),
-            inactiveTrackColor = Color(0xFF554C47),
-        ),
-    )
-}
-
-@Composable
 private fun SettingsRoundIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
     Box(
         modifier = Modifier
@@ -679,6 +685,7 @@ private fun SettingsActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
+            .pressFeedback(enabled = enabled, pressedScale = 0.985f, label = "settingsActionRowPress")
             .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -687,7 +694,7 @@ private fun SettingsActionRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (enabled) Color(0xFFFF8A3D) else Color(0xFF524943),
+            tint = if (enabled) hypeTokens.brand.primary else Color(0xFF524943),
             modifier = Modifier.size(28.dp),
         )
         Text(

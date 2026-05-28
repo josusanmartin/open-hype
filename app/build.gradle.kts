@@ -28,6 +28,14 @@ val hasReleaseSigning =
         !releaseKeyAlias.orNull.isNullOrBlank() &&
         !releaseKeyPassword.orNull.isNullOrBlank()
 
+val releaseSigningInputs =
+    mapOf(
+        "HYPE_RELEASE_STORE_FILE" to releaseStoreFile.orNull,
+        "HYPE_RELEASE_STORE_PASSWORD" to releaseStorePassword.orNull,
+        "HYPE_RELEASE_KEY_ALIAS" to releaseKeyAlias.orNull,
+        "HYPE_RELEASE_KEY_PASSWORD" to releaseKeyPassword.orNull,
+    )
+
 android {
     namespace = providers.gradleProperty("app.namespace").get()
     compileSdk = providers.gradleProperty("android.compileSdk").get().toInt()
@@ -93,6 +101,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:data"))
     implementation(project(":core:playback"))
+    implementation(project(":core:ui"))
     implementation(project(":feature:auth"))
     implementation(project(":feature:catalog"))
     implementation(project(":feature:library"))
@@ -135,3 +144,28 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
 }
+
+tasks.register("validateReleaseSigning") {
+    group = "verification"
+    description = "Fails release packaging when upload-key signing credentials are missing."
+    doLast {
+        val missing =
+            releaseSigningInputs
+                .filterValues { it.isNullOrBlank() }
+                .keys
+                .joinToString()
+        if (missing.isNotBlank()) {
+            throw GradleException(
+                "Release signing is required for Play-ready artifacts. Missing: $missing. " +
+                    "Set these as Gradle properties or environment variables.",
+            )
+        }
+    }
+}
+
+tasks
+    .matching { task ->
+        task.name == "assembleRelease" || task.name == "bundleRelease"
+    }.configureEach {
+        dependsOn("validateReleaseSigning")
+    }

@@ -31,7 +31,10 @@ class TrackRowUiModelTest {
 
         assertThat(model.coverArtUrl).isEqualTo("large")
         assertThat(model.coverArtWidthDp).isEqualTo(104)
-        assertThat(model.statsLine).isEqualTo("27   ·   reposted 3x")
+        // statsLine became raw count fields so the UI can format with
+        // pluralStringResource and locale-aware separators.
+        assertThat(model.lovedCount).isEqualTo(27)
+        assertThat(model.postedCount).isEqualTo(3)
         assertThat(model.titleLine).isEqualTo("Music In The Neighbourhood")
         assertThat(model.artistLine).isEqualTo("L.A. Sagne")
         assertThat(model.sourceLabel).isEqualTo("Destroy//Exist")

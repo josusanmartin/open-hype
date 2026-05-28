@@ -10,10 +10,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.CatalogRepository
-import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
 import kotlinx.coroutines.Job
@@ -39,7 +39,7 @@ data class CatalogScreenState(
 class LatestViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val playbackRepository: PlaybackRepository,
-    private val meRepository: MeRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
 ) : ViewModel() {
     private val modes = LatestMode.entries
     private val _state = MutableStateFlow(CatalogScreenState())
@@ -49,6 +49,16 @@ class LatestViewModel @Inject constructor(
 
     init {
         refresh()
+        // Apply every favorite edit emitted anywhere in the app to this
+        // screen's local track list. A heart tap in Library / Player / Feed
+        // now flips the icon here too without each VM duplicating the logic.
+        viewModelScope.launch {
+            favoriteSyncManager.edits.collect { edit ->
+                _state.update { current ->
+                    current.copy(tracks = favoriteSyncManager.applyTo(current.tracks, edit))
+                }
+            }
+        }
     }
 
     fun selectMode(index: Int) {
@@ -64,35 +74,9 @@ class LatestViewModel @Inject constructor(
     }
 
     fun toggleFavorite(track: Track) {
-        val newLoved = !track.isLoved
-        // Optimistic update
-        _state.update { current ->
-            current.copy(
-                tracks = current.tracks.map {
-                    if (it.id == track.id) {
-                        it.copy(
-                            isLoved = newLoved,
-                            lovedCount = (it.lovedCount + if (newLoved) 1 else -1).coerceAtLeast(0),
-                        )
-                    } else {
-                        it
-                    }
-                },
-            )
-        }
-        viewModelScope.launch {
-            val confirmed = meRepository.toggleFavorite(track.id)
-            if (confirmed != null && confirmed != newLoved) {
-                // Server contradicted us; revert.
-                _state.update { current ->
-                    current.copy(
-                        tracks = current.tracks.map {
-                            if (it.id == track.id) it.copy(isLoved = confirmed) else it
-                        },
-                    )
-                }
-            }
-        }
+        // FavoriteSyncManager owns the optimistic + revert dance and emits
+        // FavoriteEdits that this VM's init block applies to its track list.
+        favoriteSyncManager.toggle(track)
     }
 
     fun pullToRefresh() {
@@ -197,13 +181,12 @@ fun LatestRoute(
         chips = LatestMode.entries.map { it.displayLabel },
         selectedChipIndex = state.selectedIndex,
         onChipSelected = viewModel::selectMode,
-        onUtilityClick = {
-            val next = (state.selectedIndex + 1) % LatestMode.entries.size
-            viewModel.selectMode(next)
-        },
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
         onToggleFavorite = viewModel::toggleFavorite,
+        // Wires the Retry button rendered by TrackListBody on error. Previously
+        // this callback was omitted, so the button rendered but did nothing.
+        onRetry = viewModel::pullToRefresh,
         onLoadMore = viewModel::loadMore,
         hasMore = state.hasMore,
         onRefresh = viewModel::pullToRefresh,

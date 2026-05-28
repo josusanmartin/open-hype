@@ -1,5 +1,7 @@
 package dev.josu.hypecar.auto.service
 
+import android.content.Context
+import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -18,6 +20,7 @@ import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.josu.hypecar.auto.HypeMediaIds
 import dev.josu.hypecar.auto.R
 import dev.josu.hypecar.core.model.Playlist
@@ -38,8 +41,41 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Drives the Android Auto / AAOS browse tree and Now Playing custom-layout.
+ *
+ * Design choices that aren't obvious from the call sites:
+ *
+ *  - **Top-level structure: 4 sections, not 6.** Google's Android Auto guidance
+ *    recommends ≤ 4 primary tabs on the HUD. We expose Latest, Popular,
+ *    Favorites, and a "More" umbrella; Feed/Playlists/History live one level
+ *    deeper under More. Each top-level tile carries its own drawable so the
+ *    car renders an editorial grid instead of blank rectangles.
+ *
+ *  - **Content-style hints** (see [AutoBrowseHints]) are applied to every
+ *    browsable parent so car hosts render compact, glanceable track rows
+ *    instead of falling back to oversized artwork grids or default heuristics.
+ *
+ *  - **Localization.** All Auto-facing copy is resolved via [Context.getString]
+ *    against `auto/src/main/res/values/strings.xml` (and `values-es/`); nothing
+ *    is hardcoded in this class.
+ *
+ *  - **Sign-in flow.** [HypeMediaLibraryService] sets a session-level
+ *    `PendingIntent` so the car HUD can surface "open on phone". The browse
+ *    placeholder shown for authenticated sections also carries the
+ *    `ic_auto_signin` artwork so the tile is recognisable.
+ *
+ *  - **Pagination cap.** Total scrollback per section is bounded so the car
+ *    doesn't end up showing thousands of rows on a long trip. See [MaxPages].
+ *
+ *  - **Custom Now Playing actions.** Favorite/Unfavorite is the only custom
+ *    action exposed to the car host. Previous/play-next remain standard player
+ *    commands so Palisade-style hosts do not drop skip-next from the transport
+ *    row.
+ */
 @androidx.annotation.OptIn(UnstableApi::class)
 class HypeMediaLibraryCallback @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val catalogRepository: CatalogRepository,
     private val meRepository: MeRepository,
     private val searchRepository: SearchRepository,
@@ -50,7 +86,16 @@ class HypeMediaLibraryCallback @Inject constructor(
     private companion object {
         const val DefaultPageSize = 20
         const val MaxPageSize = 30
+
+        /** Hard cap on how many pages a single section can scroll on Auto, to bound distraction. */
+        const val MaxPages = 10
+
         const val ActionToggleFavorite = "dev.josu.hypecar.auto.action.TOGGLE_FAVORITE"
+
+        const val ExtraIsLoved = "is_loved"
+        const val ExtraBlogId = "blog_id"
+        const val ExtraBlogName = "blog_name"
+        const val ExtraLovedCount = "loved_count"
     }
 
     private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -59,17 +104,32 @@ class HypeMediaLibraryCallback @Inject constructor(
     private val likedNowPlaying = java.util.concurrent.atomic.AtomicBoolean(false)
     private val playerListener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            val loved = mediaItem?.mediaMetadata?.extras?.getBoolean("is_loved", false) ?: false
+            val loved = mediaItem?.mediaMetadata?.extras?.getBoolean(ExtraIsLoved, false) ?: false
             likedNowPlaying.set(loved)
-            currentSession?.let { it.setCustomLayout(it.mediaNotificationControllerInfo ?: return, listOf(favoriteButton(loved))) }
+            currentSession?.let { session ->
+                session.updateNowPlayingButtons(session.mediaNotificationControllerInfo, loved)
+            }
         }
     }
     private var currentSession: MediaLibrarySession? = null
 
+    private fun previousButton(): CommandButton =
+        CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+            .setDisplayName(context.getString(R.string.auto_action_previous))
+            .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
+            .setSlots(CommandButton.SLOT_BACK)
+            .build()
+
+    private fun nextButton(): CommandButton =
+        CommandButton.Builder(CommandButton.ICON_NEXT)
+            .setDisplayName(context.getString(R.string.auto_action_next))
+            .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
+            .setSlots(CommandButton.SLOT_FORWARD)
+            .build()
+
     private fun favoriteButton(filled: Boolean): CommandButton =
-        CommandButton.Builder()
-            .setDisplayName(if (filled) "Unfavorite" else "Favorite")
-            .setIconResId(if (filled) R.drawable.ic_auto_favorite else R.drawable.ic_auto_favorite_border)
+        CommandButton.Builder(if (filled) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
+            .setDisplayName(context.getString(if (filled) R.string.auto_action_unfavorite else R.string.auto_action_favorite))
             .setSessionCommand(SessionCommand(ActionToggleFavorite, Bundle.EMPTY))
             // Without an explicit slot, AAOS placed the heart in SLOT_FORWARD and
             // pushed skip-next off the Now Playing transport row. SLOT_OVERFLOW
@@ -77,6 +137,38 @@ class HypeMediaLibraryCallback @Inject constructor(
             // (prev / play-pause / next) stays intact.
             .setSlots(CommandButton.SLOT_OVERFLOW)
             .build()
+
+    private fun buildNowPlayingLayout(loved: Boolean): List<CommandButton> = listOf(
+        favoriteButton(loved),
+    )
+
+    private fun buildNotificationCustomLayout(loved: Boolean): List<CommandButton> = listOf(
+        favoriteButton(loved),
+    )
+
+    private fun buildMediaButtonPreferences(): List<CommandButton> = listOf(
+        previousButton(),
+        nextButton(),
+    )
+
+    private fun MediaLibrarySession.updateNowPlayingButtons(
+        controller: MediaSession.ControllerInfo?,
+        loved: Boolean,
+    ) {
+        val mediaButtons = buildMediaButtonPreferences()
+        if (controller != null) {
+            val customLayout = if (controller == mediaNotificationControllerInfo) {
+                buildNotificationCustomLayout(loved)
+            } else {
+                buildNowPlayingLayout(loved)
+            }
+            setCustomLayout(controller, customLayout)
+            setMediaButtonPreferences(controller, mediaButtons)
+        } else {
+            setCustomLayout(buildNowPlayingLayout(loved))
+            setMediaButtonPreferences(mediaButtons)
+        }
+    }
 
     override fun onConnect(
         session: MediaSession,
@@ -92,7 +184,17 @@ class HypeMediaLibraryCallback @Inject constructor(
             .build()
         return ConnectionResult.AcceptedResultBuilder(session)
             .setAvailableSessionCommands(sessionCommands)
-            .setCustomLayout(ImmutableList.of(favoriteButton(likedNowPlaying.get())))
+            .setAvailablePlayerCommands(ConnectionResult.DEFAULT_PLAYER_COMMANDS)
+            .setCustomLayout(
+                ImmutableList.copyOf(
+                    if (session is MediaLibrarySession && controller == session.mediaNotificationControllerInfo) {
+                        buildNotificationCustomLayout(likedNowPlaying.get())
+                    } else {
+                        buildNowPlayingLayout(likedNowPlaying.get())
+                    },
+                ),
+            )
+            .setMediaButtonPreferences(ImmutableList.copyOf(buildMediaButtonPreferences()))
             .build()
     }
 
@@ -101,10 +203,15 @@ class HypeMediaLibraryCallback @Inject constructor(
         controller: MediaSession.ControllerInfo,
         customCommand: SessionCommand,
         args: Bundle,
+    ): ListenableFuture<SessionResult> = when (customCommand.customAction) {
+        ActionToggleFavorite -> handleToggleFavorite(session, controller)
+        else -> Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+    }
+
+    private fun handleToggleFavorite(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
     ): ListenableFuture<SessionResult> {
-        if (customCommand.customAction != ActionToggleFavorite) {
-            return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
-        }
         val current = session.player.currentMediaItem
             ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
         val trackId = HypeMediaIds.parseTrackId(current.mediaId)
@@ -112,7 +219,7 @@ class HypeMediaLibraryCallback @Inject constructor(
         val optimistic = !likedNowPlaying.get()
         likedNowPlaying.set(optimistic)
         if (session is MediaLibrarySession) {
-            session.setCustomLayout(controller, listOf(favoriteButton(optimistic)))
+            session.updateNowPlayingButtons(controller, optimistic)
         }
         callbackScope.launch {
             val confirmed = runSuspendCatchingPreservingCancellation {
@@ -121,7 +228,7 @@ class HypeMediaLibraryCallback @Inject constructor(
             if (confirmed != null && confirmed != optimistic) {
                 likedNowPlaying.set(confirmed)
                 if (session is MediaLibrarySession) {
-                    session.setCustomLayout(controller, listOf(favoriteButton(confirmed)))
+                    session.updateNowPlayingButtons(controller, confirmed)
                 }
             }
         }
@@ -135,10 +242,7 @@ class HypeMediaLibraryCallback @Inject constructor(
     ): ListenableFuture<LibraryResult<MediaItem>> =
         Futures.immediateFuture(
             LibraryResult.ofItem(
-                browsableItem(
-                    mediaId = HypeMediaIds.root,
-                    title = "Open Hype",
-                ),
+                rootItem(),
                 params,
             ),
         )
@@ -164,12 +268,29 @@ class HypeMediaLibraryCallback @Inject constructor(
             loadItemResultSuspend(mediaId)
         }
 
+    /**
+     * Warms the search cache and notifies the controller that
+     * `search:<query>` children are ready. The car then fetches them via
+     * [onGetSearchResult] which serves the cached result list.
+     *
+     * Without this implementation (the previous code returned `LibraryResult.ofVoid()`),
+     * Assistant voice search would silently delay until [onGetSearchResult]
+     * was reached cold.
+     */
     override fun onSearch(
         session: MediaLibrarySession,
         browser: MediaSession.ControllerInfo,
         query: String,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<Void>> = Futures.immediateFuture(LibraryResult.ofVoid())
+    ): ListenableFuture<LibraryResult<Void>> = callbackScope.future {
+        val count = runSuspendCatchingPreservingCancellation {
+            searchRepository.searchTracks(SearchQuery(query), page = 1, count = DefaultPageSize).size
+        }.getOrDefault(0)
+        // Tell the controller how many search results are ready. The browser
+        // will then invoke onGetSearchResult to fetch the page.
+        session.notifySearchResultChanged(browser, query, count, params)
+        LibraryResult.ofVoid(params)
+    }
 
     override fun onGetSearchResult(
         session: MediaLibrarySession,
@@ -184,7 +305,7 @@ class HypeMediaLibraryCallback @Inject constructor(
                 ImmutableList.copyOf(
                     loadSearchResultsSuspend(query, page, pageSize),
                 ),
-                params,
+                searchParamsWithHints(params),
             )
         }
 
@@ -277,8 +398,8 @@ class HypeMediaLibraryCallback @Inject constructor(
         HypeMediaIds.parsePlaylistId(mediaId)?.let { playlistId ->
             val title = runSuspendCatchingPreservingCancellation {
                 meRepository.playlistNames().firstOrNull { it.id == playlistId }?.name
-            }.getOrNull() ?: "Playlist $playlistId"
-            browsableItem(mediaId, title)
+            }.getOrNull() ?: context.getString(R.string.auto_playlist_fallback_name, playlistId)
+            browsableItem(HypeMediaIds.playlist(playlistId), title)
         }
 
     private suspend fun loadPlayableTrackItem(mediaId: String): MediaItem? =
@@ -298,18 +419,68 @@ class HypeMediaLibraryCallback @Inject constructor(
             ).map { it.toPlayableItem(sourceId) }
         }.getOrDefault(emptyList())
 
+    /**
+     * Like [LibraryParams] for search but with our content-style hint applied
+     * so the car renders search results as compact track rows (artwork + title +
+     * artist) rather than a host-specific grid/default layout.
+     */
+    private fun searchParamsWithHints(
+        original: MediaLibraryService.LibraryParams?,
+    ): MediaLibraryService.LibraryParams =
+        MediaLibraryService.LibraryParams.Builder()
+            .setExtras(
+                Bundle().apply {
+                    putAll(AutoBrowseHints.parentHints(AutoBrowseHints.ChildStyle.LIST_BROWSABLE))
+                    original?.extras?.let { putAll(it) }
+                },
+            )
+            .build()
+
     private suspend fun loadChildrenResultSuspend(
         parentId: String,
         page: Int,
         pageSize: Int,
         params: MediaLibraryService.LibraryParams?,
-    ): LibraryResult<ImmutableList<MediaItem>> =
-        runSuspendCatchingPreservingCancellation {
+    ): LibraryResult<ImmutableList<MediaItem>> {
+        // Hard cap on per-section paging to bound driver distraction.
+        if (page >= MaxPages) {
+            return LibraryResult.ofItemList(ImmutableList.of(), params)
+        }
+        return runSuspendCatchingPreservingCancellation {
             ImmutableList.copyOf(loadChildrenInternalSuspend(parentId, page, pageSize))
         }.fold(
-            onSuccess = { LibraryResult.ofItemList(it, params) },
+            onSuccess = { items ->
+                LibraryResult.ofItemList(items, paramsWithHintsFor(parentId, params))
+            },
             onFailure = { LibraryResult.ofError(SessionError.ERROR_IO) },
         )
+    }
+
+    /**
+     * Stamps the right content-style hints onto the [LibraryParams] for a given
+     * browse node, so the car's renderer knows whether to show grid tiles or
+     * compact list rows. Root and More → category list. Playlists and playable
+     * track sections → compact list rows. Search results → compact rows
+     * (applied separately).
+     */
+    private fun paramsWithHintsFor(
+        parentId: String,
+        original: MediaLibraryService.LibraryParams?,
+    ): MediaLibraryService.LibraryParams {
+        val childStyle = when (parentId) {
+            HypeMediaIds.root -> AutoBrowseHints.ChildStyle.CATEGORY_LIST
+            HypeMediaIds.more -> AutoBrowseHints.ChildStyle.CATEGORY_LIST
+            else -> AutoBrowseHints.ChildStyle.LIST_BROWSABLE
+        }
+        return MediaLibraryService.LibraryParams.Builder()
+            .setExtras(
+                Bundle().apply {
+                    putAll(AutoBrowseHints.parentHints(childStyle))
+                    original?.extras?.let { putAll(it) }
+                },
+            )
+            .build()
+    }
 
     private suspend fun loadItemResultSuspend(mediaId: String): LibraryResult<MediaItem> =
         runSuspendCatchingPreservingCancellation { loadItemInternalSuspend(mediaId) }
@@ -330,21 +501,29 @@ class HypeMediaLibraryCallback @Inject constructor(
         val sourcePage = page.coerceAtLeast(0)
         return when (parentId) {
             HypeMediaIds.root -> sectionItems()
+            HypeMediaIds.more -> moreSectionItems()
             HypeMediaIds.latest -> catalogRepository.latest(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
             HypeMediaIds.popular -> catalogRepository.popular(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
             HypeMediaIds.favorites -> requireSession(parentId) {
-                meRepository.favorites(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
+                val items = meRepository.favorites(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
+                items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_favorites_title, R.string.auto_empty_favorites_subtitle) }
             }
             HypeMediaIds.feed -> requireSession(parentId) {
-                meRepository.feed(page = apiPage, count = count).map { it.track.toPlayableItem(parentId, sourcePage) }
+                val items = meRepository.feed(page = apiPage, count = count).map { it.track.toPlayableItem(parentId, sourcePage) }
+                items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_feed_title, R.string.auto_empty_feed_subtitle) }
             }
             HypeMediaIds.playlists -> requireSession(parentId) {
-                meRepository.playlistNames().map { it.toBrowsableItem() }
+                val items = meRepository.playlistNames().map { it.toBrowsableItem() }
+                items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_playlists_title, R.string.auto_empty_playlists_subtitle) }
             }
-            HypeMediaIds.history -> meRepository.history(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
+            HypeMediaIds.history -> {
+                val items = meRepository.history(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
+                items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_history_title, R.string.auto_empty_history_subtitle) }
+            }
             else -> HypeMediaIds.parsePlaylistId(parentId)?.let { playlistId ->
                 requireSession(parentId) {
-                    meRepository.playlist(playlistId, page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
+                    val items = meRepository.playlist(playlistId, page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage) }
+                    items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_generic_title, null) }
                 }
             } ?: HypeMediaIds.parseSearchQuery(parentId)?.let { query ->
                 searchRepository.searchTracks(
@@ -355,6 +534,12 @@ class HypeMediaLibraryCallback @Inject constructor(
             } ?: emptyList()
         }
     }
+
+    /** Wraps a load with a single placeholder when the result is empty on the first page. */
+    private fun List<MediaItem>.ifEmptyOnFirstPage(
+        page: Int,
+        builder: () -> MediaItem,
+    ): List<MediaItem> = if (isEmpty() && page <= 0) listOf(builder()) else this
 
     /**
      * Returns the result of [loadSignedIn] if a session exists; otherwise a single
@@ -369,8 +554,27 @@ class HypeMediaLibraryCallback @Inject constructor(
         return if (session == null) {
             listOf(signInPromptItem(parentId))
         } else {
-            loadSignedIn()
+            runSuspendCatchingPreservingCancellation {
+                loadSignedIn()
+            }.getOrElse { error ->
+                if (error.isUnauthorizedResponse()) {
+                    listOf(signInPromptItem(parentId))
+                } else {
+                    listOf(privateSectionUnavailableItem(parentId))
+                }
+            }
         }
+    }
+
+    private fun Throwable.isUnauthorizedResponse(): Boolean {
+        val code = runCatching {
+            javaClass.methods.firstOrNull { method ->
+                method.name == "code" && method.parameterTypes.isEmpty()
+            }?.invoke(this) as? Int
+        }.getOrNull()
+        return code == 401 ||
+            message?.contains("401") == true ||
+            cause?.isUnauthorizedResponse() == true
     }
 
     private fun signInPromptItem(parentId: String): MediaItem =
@@ -378,23 +582,62 @@ class HypeMediaLibraryCallback @Inject constructor(
             .setMediaId("$parentId:signin")
             .setMediaMetadata(
                 MediaMetadata.Builder()
-                    .setTitle("Sign in on the phone first")
-                    .setSubtitle("Your favorites, feed and playlists need a Hype Machine session.")
+                    .setTitle(context.getString(R.string.auto_signin_title))
+                    .setSubtitle(context.getString(R.string.auto_signin_subtitle))
+                    .setArtworkUri(drawableResUri(R.drawable.ic_auto_signin))
                     .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_NEWS)
-                    .setIsBrowsable(false)
+                    // AAOS filters inert items (neither browsable nor playable)
+                    // out of lists, which turns placeholders into the generic
+                    // "Media isn't available" error. Mark placeholders as
+                    // browsable informational rows so the car can render them.
+                    .setIsBrowsable(true)
                     .setIsPlayable(false)
+                    .setExtras(AutoBrowseHints.placeholderHints())
+                    .build(),
+            )
+            .build()
+
+    private fun privateSectionUnavailableItem(parentId: String): MediaItem =
+        MediaItem.Builder()
+            .setMediaId("$parentId:unavailable")
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(context.getString(R.string.auto_private_unavailable_title))
+                    .setSubtitle(context.getString(R.string.auto_private_unavailable_subtitle))
+                    .setArtworkUri(drawableResUri(R.drawable.ic_auto_signin))
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_NEWS)
+                    .setIsBrowsable(true)
+                    .setIsPlayable(false)
+                    .setExtras(AutoBrowseHints.placeholderHints())
+                    .build(),
+            )
+            .build()
+
+    private fun emptyStateItem(
+        parentId: String,
+        titleResId: Int,
+        subtitleResId: Int?,
+    ): MediaItem =
+        MediaItem.Builder()
+            .setMediaId("$parentId:empty")
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(context.getString(titleResId))
+                    .apply { if (subtitleResId != null) setSubtitle(context.getString(subtitleResId)) }
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                    .setIsBrowsable(true)
+                    .setIsPlayable(false)
+                    .setExtras(AutoBrowseHints.placeholderHints())
                     .build(),
             )
             .build()
 
     private suspend fun loadItemInternalSuspend(mediaId: String): MediaItem? = when (mediaId) {
-        HypeMediaIds.root -> browsableItem(HypeMediaIds.root, "Open Hype")
-        HypeMediaIds.latest -> browsableItem(HypeMediaIds.latest, "Latest")
-        HypeMediaIds.popular -> browsableItem(HypeMediaIds.popular, "Popular")
-        HypeMediaIds.favorites -> browsableItem(HypeMediaIds.favorites, "Favorites")
-        HypeMediaIds.feed -> browsableItem(HypeMediaIds.feed, "Feed")
-        HypeMediaIds.playlists -> browsableItem(HypeMediaIds.playlists, "Playlists")
-        HypeMediaIds.history -> browsableItem(HypeMediaIds.history, "History")
+        HypeMediaIds.root -> rootItem()
+        HypeMediaIds.latest, HypeMediaIds.popular, HypeMediaIds.favorites,
+        HypeMediaIds.feed, HypeMediaIds.playlists, HypeMediaIds.history,
+        HypeMediaIds.more,
+        -> sectionItem(mediaId)
         else -> loadPlaylistItem(mediaId) ?: loadPlayableTrackItem(mediaId)
     }
 
@@ -436,63 +679,144 @@ class HypeMediaLibraryCallback @Inject constructor(
                     it.startsWith("playlist:")
             }
 
+    /**
+     * Returns the four primary top-level sections shown at the Android Auto
+     * root. The full list of categories (Feed, Playlists, History) is reachable
+     * one level deeper via [HypeMediaIds.more].
+     */
     private fun sectionItems(): List<MediaItem> = listOf(
-        browsableItem(HypeMediaIds.latest, "Latest"),
-        browsableItem(HypeMediaIds.popular, "Popular"),
-        browsableItem(HypeMediaIds.favorites, "Favorites"),
-        browsableItem(HypeMediaIds.feed, "Feed"),
-        browsableItem(HypeMediaIds.playlists, "Playlists"),
-        browsableItem(HypeMediaIds.history, "History"),
+        sectionTile(HypeMediaIds.latest, R.string.auto_section_latest_title, R.string.auto_section_latest_subtitle, R.drawable.ic_auto_section_latest),
+        sectionTile(HypeMediaIds.popular, R.string.auto_section_popular_title, R.string.auto_section_popular_subtitle, R.drawable.ic_auto_section_popular),
+        sectionTile(HypeMediaIds.favorites, R.string.auto_section_favorites_title, R.string.auto_section_favorites_subtitle, R.drawable.ic_auto_section_favorites),
+        sectionTile(HypeMediaIds.more, R.string.auto_section_more_title, R.string.auto_section_more_subtitle, R.drawable.ic_auto_section_more),
     )
+
+    private fun moreSectionItems(): List<MediaItem> = listOf(
+        sectionTile(HypeMediaIds.feed, R.string.auto_section_feed_title, R.string.auto_section_feed_subtitle, R.drawable.ic_auto_section_feed),
+        sectionTile(HypeMediaIds.playlists, R.string.auto_section_playlists_title, R.string.auto_section_playlists_subtitle, R.drawable.ic_auto_section_playlists),
+        sectionTile(HypeMediaIds.history, R.string.auto_section_history_title, R.string.auto_section_history_subtitle, R.drawable.ic_auto_section_history),
+    )
+
+    private fun rootItem(): MediaItem =
+        sectionTile(HypeMediaIds.root, R.string.auto_root_title, subtitleResId = null, artworkResId = null)
+
+    /** Builds a single top-level section tile with localised title/subtitle and an in-APK drawable. */
+    private fun sectionTile(
+        mediaId: String,
+        titleResId: Int,
+        subtitleResId: Int?,
+        artworkResId: Int?,
+    ): MediaItem = browsableItem(
+        mediaId = mediaId,
+        title = context.getString(titleResId),
+        subtitle = subtitleResId?.let(context::getString),
+        artworkUri = artworkResId?.let(::drawableResUri),
+        applySelfCategoryHint = true,
+    )
+
+    private fun sectionItem(mediaId: String): MediaItem {
+        val titleSubtitleArt = when (mediaId) {
+            HypeMediaIds.root -> Triple(R.string.auto_root_title, null, null)
+            HypeMediaIds.latest -> Triple(R.string.auto_section_latest_title, R.string.auto_section_latest_subtitle, R.drawable.ic_auto_section_latest)
+            HypeMediaIds.popular -> Triple(R.string.auto_section_popular_title, R.string.auto_section_popular_subtitle, R.drawable.ic_auto_section_popular)
+            HypeMediaIds.favorites -> Triple(R.string.auto_section_favorites_title, R.string.auto_section_favorites_subtitle, R.drawable.ic_auto_section_favorites)
+            HypeMediaIds.feed -> Triple(R.string.auto_section_feed_title, R.string.auto_section_feed_subtitle, R.drawable.ic_auto_section_feed)
+            HypeMediaIds.playlists -> Triple(R.string.auto_section_playlists_title, R.string.auto_section_playlists_subtitle, R.drawable.ic_auto_section_playlists)
+            HypeMediaIds.history -> Triple(R.string.auto_section_history_title, R.string.auto_section_history_subtitle, R.drawable.ic_auto_section_history)
+            HypeMediaIds.more -> Triple(R.string.auto_section_more_title, R.string.auto_section_more_subtitle, R.drawable.ic_auto_section_more)
+            else -> Triple(R.string.auto_root_title, null, null)
+        }
+        return sectionTile(mediaId, titleSubtitleArt.first, titleSubtitleArt.second, titleSubtitleArt.third)
+    }
 
     private fun Playlist.toBrowsableItem(): MediaItem = browsableItem(
         mediaId = HypeMediaIds.playlist(id),
         title = name,
     )
 
-    private fun Track.toPlayableItem(sourceId: String? = null, sourcePage: Int = 0): MediaItem =
-        MediaItem.Builder()
-            .setMediaId(
-                sourceId?.let { HypeMediaIds.track(id, it, sourcePage = sourcePage) }
-                    ?: HypeMediaIds.track(id),
-            )
-            .setUri(offlineRepository.cachedAudioUri(id) ?: streamUrl())
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setArtist(artist)
-                    .setAlbumTitle(postedBy)
-                    .setArtworkUri(bestThumbnail()?.let(android.net.Uri::parse))
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                    .setIsPlayable(true)
-                    .setIsBrowsable(false)
-                    // Carry the loved state through to the player listener so the
-                    // car's custom favorite button reflects it on each track change.
-                    .setExtras(Bundle().apply { putBoolean("is_loved", isLoved) })
-                    .build(),
-            )
-            .build()
+    /** Builds a playable [MediaItem] from a [Track] with title/artist/album/subtitle metadata. */
+    private fun Track.toPlayableItem(sourceId: String? = null, sourcePage: Int = 0): MediaItem = MediaItem.Builder()
+        .setMediaId(
+            sourceId?.let { HypeMediaIds.track(id, it, sourcePage = sourcePage) }
+                ?: HypeMediaIds.track(id),
+        )
+        .setUri(offlineRepository.cachedAudioUri(id) ?: streamUrl())
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(title)
+                .setArtist(artist)
+                .setAlbumTitle(postedBy)
+                .setSubtitle(artist)
+                .setDisplayTitle(title)
+                .setDescription(postDescription.takeIf { it.isNotBlank() })
+                .setArtworkUri(bestThumbnail()?.let(android.net.Uri::parse))
+                .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                .setIsPlayable(true)
+                .setIsBrowsable(false)
+                // Carry secondary Hype metadata in extras so the visible car
+                // row can stay title + artist while commands still have the
+                // state they need.
+                .setExtras(
+                    Bundle().apply {
+                        putBoolean(ExtraIsLoved, isLoved)
+                        putInt(ExtraBlogId, postedById)
+                        putString(ExtraBlogName, postedBy)
+                        putInt(ExtraLovedCount, lovedCount)
+                    },
+                )
+                .build(),
+        )
+        .build()
 
-    private fun browsableItem(mediaId: String, title: String): MediaItem {
+    /**
+     * Builds a browsable [MediaItem]. The two-argument form is preserved
+     * exactly (`browsableItem(String, String)`) because reflection-driven
+     * tests still call it by name.
+     */
+    private fun browsableItem(mediaId: String, title: String): MediaItem = browsableItem(
+        mediaId = mediaId,
+        title = title,
+        subtitle = null,
+        artworkUri = null,
+        applySelfCategoryHint = false,
+    )
+
+    private fun browsableItem(
+        mediaId: String,
+        title: String,
+        subtitle: String?,
+        artworkUri: Uri?,
+        applySelfCategoryHint: Boolean,
+    ): MediaItem {
         val mediaType = when (mediaId) {
             HypeMediaIds.root -> MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
             HypeMediaIds.favorites -> MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS
             HypeMediaIds.playlists -> MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS
             HypeMediaIds.history -> MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS
+            HypeMediaIds.more -> MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
             else -> MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS
         }
+        val builder = MediaMetadata.Builder()
+            .setTitle(title)
+            .setMediaType(mediaType)
+            .setIsBrowsable(true)
+            .setIsPlayable(false)
+        if (subtitle != null) builder.setSubtitle(subtitle)
+        if (artworkUri != null) builder.setArtworkUri(artworkUri)
+        if (applySelfCategoryHint) builder.setExtras(AutoBrowseHints.selfHintCategory())
         return MediaItem.Builder()
             .setMediaId(mediaId)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setMediaType(mediaType)
-                    .setIsBrowsable(true)
-                    .setIsPlayable(false)
-                    .build(),
-            )
+            .setMediaMetadata(builder.build())
             .build()
     }
+
+    /** Builds a `android.resource://...` URI for an in-APK drawable, suitable for [MediaMetadata.setArtworkUri]. */
+    private fun drawableResUri(resId: Int): Uri =
+        Uri.Builder()
+            .scheme("android.resource")
+            .authority(context.packageName)
+            .appendPath(resId.toString())
+            .build()
 
     fun close() {
         currentSession?.player?.removeListener(playerListener)

@@ -40,6 +40,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.Playlist
@@ -48,6 +49,8 @@ import dev.josu.hypecar.core.model.repository.AuthRepository
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.catalog.EditorialHeroHeader
 import dev.josu.hypecar.feature.catalog.TrackListBody
 import dev.josu.hypecar.feature.catalog.rememberIsAutomotiveUi
@@ -80,6 +83,7 @@ class LibraryViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val meRepository: MeRepository,
     private val playbackRepository: PlaybackRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
@@ -90,6 +94,15 @@ class LibraryViewModel @Inject constructor(
             authRepository.session.collect { session ->
                 _state.update { it.copy(session = session) }
                 refresh()
+            }
+        }
+        // Apply favorite edits emitted by any other screen so the Library
+        // heart icons stay in sync without re-fetching.
+        viewModelScope.launch {
+            favoriteSyncManager.edits.collect { edit ->
+                _state.update { current ->
+                    current.copy(tracks = favoriteSyncManager.applyTo(current.tracks, edit))
+                }
             }
         }
     }
@@ -122,33 +135,7 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun toggleFavorite(track: Track) {
-        val newLoved = !track.isLoved
-        _state.update { current ->
-            current.copy(
-                tracks = current.tracks.map {
-                    if (it.id == track.id) {
-                        it.copy(
-                            isLoved = newLoved,
-                            lovedCount = (it.lovedCount + if (newLoved) 1 else -1).coerceAtLeast(0),
-                        )
-                    } else {
-                        it
-                    }
-                },
-            )
-        }
-        viewModelScope.launch {
-            val confirmed = meRepository.toggleFavorite(track.id)
-            if (confirmed != null && confirmed != newLoved) {
-                _state.update { current ->
-                    current.copy(
-                        tracks = current.tracks.map {
-                            if (it.id == track.id) it.copy(isLoved = confirmed) else it
-                        },
-                    )
-                }
-            }
-        }
+        favoriteSyncManager.toggle(track)
     }
 
     private var loadMoreJob: Job? = null
@@ -408,7 +395,7 @@ private fun LibraryProfileStrip(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = outerPadding, vertical = outerPadding),
-        color = Color(0xFF151211),
+        color = hypeTokens.cards.surfaceAlt,
         contentColor = Color.White,
         shape = profileShape,
         border = BorderStroke(1.dp, Color(0xFF362823)),
@@ -441,13 +428,16 @@ private fun LibraryProfileStrip(
                         MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     },
                 )
+                // Subtitle uses a per-tab string resource so translations and
+                // future copy edits don't require touching Kotlin.
+                val subtitleRes = when (selectedTab) {
+                    LibraryTab.FAVORITES -> R.string.library_profile_subtitle_favorites
+                    LibraryTab.FEED -> R.string.library_profile_subtitle_feed
+                    LibraryTab.PLAYLISTS -> R.string.library_profile_subtitle_playlists
+                    LibraryTab.HISTORY -> R.string.library_profile_subtitle_history
+                }
                 Text(
-                    text = when (selectedTab) {
-                        LibraryTab.FAVORITES -> "@${session.username} · saved rotation"
-                        LibraryTab.FEED -> "@${session.username} · following stream"
-                        LibraryTab.PLAYLISTS -> "@${session.username} · playlist stacks"
-                        LibraryTab.HISTORY -> "@${session.username} · recent trail"
-                    },
+                    text = stringResource(subtitleRes, session.username),
                     style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFE2D4C6)),
                     maxLines = if (compactMode) 1 else 2,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -456,6 +446,10 @@ private fun LibraryProfileStrip(
             }
             OutlinedButton(
                 onClick = onProfileClick,
+                modifier = Modifier.pressFeedback(
+                    pressedScale = 0.95f,
+                    label = "libraryProfileButtonPress",
+                ),
                 border = BorderStroke(1.dp, Color(0xFF725446)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFB07B)),
             ) {
@@ -463,6 +457,10 @@ private fun LibraryProfileStrip(
             }
             Surface(
                 onClick = onLogoutClick,
+                modifier = Modifier.pressFeedback(
+                    pressedScale = 0.90f,
+                    label = "libraryLogoutPress",
+                ),
                 shape = CircleShape,
                 color = Color(0xFF241B18),
             ) {
@@ -497,11 +495,15 @@ private fun PlaylistStrip(
             val selected = playlist.id == selectedPlaylistId
             Surface(
                 onClick = { onPlaylistSelected(playlist.id) },
+                modifier = Modifier.pressFeedback(
+                    pressedScale = 0.95f,
+                    label = "playlistChipPress",
+                ),
                 shape = RoundedCornerShape(if (compactMode) 9.dp else 16.dp),
                 color = if (selected) Color(0xFF201816) else Color(0xFFF9F4EE),
                 border = BorderStroke(
                     width = 1.dp,
-                    color = if (selected) Color(0xFFFF934A) else Color(0xFFE1C9B2),
+                    color = if (selected) hypeTokens.brand.primary else Color(0xFFE1C9B2),
                 ),
             ) {
                 Text(
@@ -530,8 +532,9 @@ private fun SignedOutCard(
             .fillMaxWidth()
             .padding(horizontal = if (compactMode) 6.dp else 16.dp, vertical = if (compactMode) 6.dp else 16.dp),
         shape = RoundedCornerShape(if (compactMode) 14.dp else 30.dp),
-        color = Color(0xFF151211),
+        color = Color(0xFF120F0E),
         contentColor = Color.White,
+        border = BorderStroke(1.dp, Color(0xFF2E211C)),
     ) {
         Column(
             modifier = Modifier.padding(
@@ -556,9 +559,11 @@ private fun SignedOutCard(
             )
             Button(
                 onClick = onLoginClick,
-                modifier = Modifier.padding(top = if (compactMode) 8.dp else 18.dp),
+                modifier = Modifier
+                    .pressFeedback(pressedScale = 0.96f, label = "signedOutLoginPress")
+                    .padding(top = if (compactMode) 8.dp else 18.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFFF8A3D),
+                    containerColor = hypeTokens.brand.primary,
                     contentColor = Color(0xFF19110E),
                 ),
             ) {

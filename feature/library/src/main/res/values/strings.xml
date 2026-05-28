@@ -18,4 +18,13 @@
     <string name="library_signed_out_card_title">Open your full library</string>
     <string name="library_signed_out_card_body">Sign in to access %1$s, keep favorites synced, and carry the same queue into the car.</string>
     <string name="library_signed_out_card_button">Sign in</string>
+
+    <!-- Per-tab profile-strip subtitles. %1$s is the username. -->
+    <string name="library_profile_subtitle_favorites">\@%1$s · saved rotation</string>
+    <string name="library_profile_subtitle_feed">\@%1$s · following stream</string>
+    <string name="library_profile_subtitle_playlists">\@%1$s · playlist stacks</string>
+    <string name="library_profile_subtitle_history">\@%1$s · recent trail</string>
+
+    <!-- Snackbar shown when AuthRepository.session transitions to null mid-app. -->
+    <string name="library_session_expired">Your session expired. Please sign in again.</string>
 </resources>

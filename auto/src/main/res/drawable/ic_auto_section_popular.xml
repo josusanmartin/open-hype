@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Popular: trending bars over a dark background. -->
+    <path
+        android:fillColor="#FF1F2226"
+        android:pathData="M0,0h96v96h-96z" />
+    <path
+        android:fillColor="#FFFF8A3D"
+        android:pathData="M16,72 L28,72 L28,52 L16,52 Z M36,72 L48,72 L48,38 L36,38 Z M56,72 L68,72 L68,24 L56,24 Z M76,72 L88,72 L88,46 L76,46 Z" />
+</vector>

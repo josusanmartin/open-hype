@@ -34,14 +34,14 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -104,6 +105,8 @@ import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.PlaybackRepeatMode
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -161,29 +164,29 @@ internal data class PlayerLayoutMetrics(
             utilityIconSize = 18.dp,
         )
 
-        fun phone() = PlayerLayoutMetrics(
+        fun phone(compact: Boolean = false) = PlayerLayoutMetrics(
             topBarHeight = 0.dp,
             showsPhoneOverlayCollapseControl = false,
-            artworkWidthFraction = 0.70f,
-            artworkTopPadding = 30.dp,
-            titleHorizontalPadding = 28.dp,
-            titleVerticalPadding = 4.dp,
-            progressHorizontalPadding = 28.dp,
-            progressVerticalPadding = 4.dp,
+            artworkWidthFraction = if (compact) 0.62f else 0.70f,
+            artworkTopPadding = if (compact) 22.dp else 30.dp,
+            titleHorizontalPadding = if (compact) 24.dp else 28.dp,
+            titleVerticalPadding = if (compact) 2.dp else 4.dp,
+            progressHorizontalPadding = if (compact) 24.dp else 28.dp,
+            progressVerticalPadding = if (compact) 2.dp else 4.dp,
             artworkHorizontalPadding = 0.dp,
-            artworkCornerRadius = 26.dp,
+            artworkCornerRadius = if (compact) 22.dp else 26.dp,
             infoHorizontalPadding = 18.dp,
             infoCardSpacing = 8.dp,
             descriptionHorizontalPadding = 16.dp,
             descriptionVerticalPadding = 8.dp,
-            bottomDeckHorizontalPadding = 24.dp,
-            bottomDeckVerticalPadding = 14.dp,
+            bottomDeckHorizontalPadding = if (compact) 18.dp else 24.dp,
+            bottomDeckVerticalPadding = if (compact) 10.dp else 14.dp,
             bottomDeckSpacing = 0.dp,
-            bottomControlsReservedHeight = 122.dp,
-            secondaryControlSize = 50.dp,
-            secondaryControlIconSize = 27.dp,
-            primaryControlSize = 74.dp,
-            primaryControlIconSize = 36.dp,
+            bottomControlsReservedHeight = if (compact) 110.dp else 122.dp,
+            secondaryControlSize = if (compact) 46.dp else 50.dp,
+            secondaryControlIconSize = if (compact) 25.dp else 27.dp,
+            primaryControlSize = if (compact) 68.dp else 74.dp,
+            primaryControlIconSize = if (compact) 33.dp else 36.dp,
             utilityIconSize = 22.dp,
         )
     }
@@ -218,6 +221,19 @@ class PlayerViewModel @Inject constructor(
 
     fun toggleShuffle() {
         viewModelScope.launch { playbackRepository.toggleShuffle() }
+    }
+
+    /**
+     * Jump to a specific item in the current queue. Used by the up-next list
+     * so tapping a queued track plays it directly instead of skipping
+     * sequentially with skip-next.
+     */
+    fun jumpToQueueIndex(index: Int) {
+        val current = queue.value
+        if (index < 0 || index >= current.items.size || index == current.currentIndex) return
+        viewModelScope.launch {
+            playbackRepository.play(current.items.map { it.track }, startIndex = index)
+        }
     }
 
     fun cycleRepeatMode() {
@@ -291,6 +307,7 @@ fun PlayerRoute(
     val queue by viewModel.queue.collectAsStateWithLifecycle()
     val model = PlayerScreenUiModel.fromQueue(queue)
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val uiMode = context.resources.configuration.uiMode
     val isAutomotive = remember(context, uiMode) {
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
@@ -299,7 +316,13 @@ fun PlayerRoute(
             Build.DEVICE.contains("car", ignoreCase = true) ||
             Build.FINGERPRINT.contains("gcar", ignoreCase = true)
     }
-    val metrics = if (isAutomotive) PlayerLayoutMetrics.automotive() else PlayerLayoutMetrics.phone()
+    val useCompactPhoneLayout = !isAutomotive &&
+        (configuration.screenHeightDp <= 820 || configuration.fontScale > 1.05f)
+    val metrics = if (isAutomotive) {
+        PlayerLayoutMetrics.automotive()
+    } else {
+        PlayerLayoutMetrics.phone(compact = useCompactPhoneLayout)
+    }
     val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     val currentMediaId = queue.current?.mediaId
     val haptics = LocalHapticFeedback.current
@@ -455,11 +478,6 @@ fun PlayerRoute(
         topBar = {
             if (isAutomotive) {
                 CompactPlayerTopBar(onCollapse = { backDispatcher?.onBackPressed() })
-            } else {
-                NowPlayingTopBar(
-                    onCollapse = { backDispatcher?.onBackPressed() },
-                    onMore = { /* room for an overflow menu in a future pass */ },
-                )
             }
         },
         snackbarHost = {
@@ -474,7 +492,7 @@ fun PlayerRoute(
                     snackbarData = data,
                     containerColor = Color(0xFF2D211C),
                     contentColor = Color.White,
-                    actionColor = Color(0xFFFF8A3D),
+                    actionColor = hypeTokens.brand.primary,
                 )
             }
         },
@@ -629,7 +647,9 @@ fun PlayerRoute(
                                                 transportTick()
                                                 viewModel.toggleFavorite()
                                             },
-                                            modifier = Modifier.size(52.dp),
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .pressFeedback(pressedScale = 0.90f, label = "autoPlayerFavoritePress"),
                                         ) {
                                             Icon(
                                                 imageVector = if (model.isLoved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -644,6 +664,7 @@ fun PlayerRoute(
                                                 .size(52.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0x1AFF8A3D))
+                                                .pressFeedback(pressedScale = 0.90f, label = "playerFavoritePress")
                                                 .clickable {
                                                     transportTick()
                                                     viewModel.toggleFavorite()
@@ -689,9 +710,52 @@ fun PlayerRoute(
                                             .padding(top = 8.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                     ) {
-                                        Text(model.elapsedLabel, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
-                                        Text(model.remainingLabel, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
+                                        // While the user is dragging the
+                                        // thumb the labels track the drag
+                                        // position; once released they fall
+                                        // back to the live playback position.
+                                        // Previously the labels stayed pinned
+                                        // until release, so the thumb visually
+                                        // moved against frozen time digits.
+                                        val displayedElapsed = if (isSeeking) {
+                                            PlayerScreenUiModel.formatMs(
+                                                (selectedProgress * model.durationMs).toLong()
+                                                    .coerceAtLeast(0L),
+                                            )
+                                        } else {
+                                            model.elapsedLabel
+                                        }
+                                        val displayedRemaining = if (isSeeking) {
+                                            val remainingMs = (model.durationMs - (selectedProgress * model.durationMs).toLong())
+                                                .coerceAtLeast(0L)
+                                            "-${PlayerScreenUiModel.formatMs(remainingMs)}"
+                                        } else {
+                                            model.remainingLabel
+                                        }
+                                        Text(displayedElapsed, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
+                                        Text(displayedRemaining, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
                                     }
+                                }
+
+                                // Up-next strip — visible on phone only.
+                                // Keep it compact because this region sits
+                                // between the scrubber and fixed transport
+                                // deck, and Samsung display scaling can
+                                // reduce the effective vertical space.
+                                if (!isAutomotive && queue.items.size - queue.currentIndex > 1) {
+                                    UpNextStrip(
+                                        items = queue.items,
+                                        currentIndex = queue.currentIndex,
+                                        onJump = { absoluteIndex ->
+                                            transportTick()
+                                            viewModel.jumpToQueueIndex(absoluteIndex)
+                                        },
+                                        modifier = Modifier.padding(
+                                            top = 8.dp,
+                                            start = metrics.titleHorizontalPadding,
+                                            end = metrics.titleHorizontalPadding,
+                                        ),
+                                    )
                                 }
 
                                 if (!isAutomotive) {
@@ -908,7 +972,12 @@ private fun CompactPlayerTopBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onCollapse, modifier = Modifier.size(42.dp)) {
+            IconButton(
+                onClick = onCollapse,
+                modifier = Modifier
+                    .size(42.dp)
+                    .pressFeedback(pressedScale = 0.90f, label = "compactPlayerCollapsePress"),
+            ) {
                 Icon(
                     Icons.Default.ExpandMore,
                     contentDescription = stringResource(R.string.player_collapse),
@@ -932,6 +1001,10 @@ private fun PlayerModeButton(
 ) {
     Surface(
         onClick = onClick,
+        modifier = Modifier.pressFeedback(
+            pressedScale = if (active) 0.90f else 0.93f,
+            label = "playerModePress",
+        ),
         shape = CircleShape,
         color = if (active) Color(0xFF2C1D16) else Color.Transparent,
         border = null,
@@ -945,7 +1018,7 @@ private fun PlayerModeButton(
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
-                tint = if (active) Color(0xFFFF8A3D) else Color(0xFFE3DDD9),
+                tint = if (active) hypeTokens.brand.primary else Color(0xFFE3DDD9),
                 modifier = Modifier.size(iconSize),
             )
         }
@@ -971,7 +1044,14 @@ private fun PlayerControlButton(
                         colors = listOf(Color(0xFFFFC09C), Color(0xFFD88754)),
                     ),
                 )
-                .clickable(onClick = onClick)
+                .pressFeedback(pressedScale = 0.90f, label = "playerPrimaryPress")
+                // Role.Button so TalkBack announces this Box as a button.
+                // Without it the bare clickable Box is announced only as
+                // "double-tap to activate" with no role context.
+                .clickable(
+                    role = androidx.compose.ui.semantics.Role.Button,
+                    onClick = onClick,
+                )
                 .padding(10.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -985,6 +1065,7 @@ private fun PlayerControlButton(
     } else {
         Surface(
             onClick = onClick,
+            modifier = Modifier.pressFeedback(pressedScale = 0.92f, label = "playerSecondaryPress"),
             shape = CircleShape,
             color = Color.Transparent,
             border = null,
@@ -1006,68 +1087,118 @@ private fun PlayerControlButton(
     }
 }
 
+// CompactInfoCard was defined here but never invoked — removed during the
+// design-review cleanup. The player surfaces source/loved data inline now.
+
+/**
+ * Horizontal up-next carousel. Skips the currently playing item and renders
+ * up to 6 upcoming tracks as fixed-height queue cards.
+ *
+ * Tapping a tile jumps to that track via [PlayerViewModel.jumpToQueueIndex],
+ * which routes through `PlaybackRepository.play(tracks, startIndex)` so
+ * Media3 cleanly resets its position to the new item.
+ *
+ * Reorder and remove are intentionally NOT wired here — both need a design
+ * pass on how to expose the affordance (long-press? swipe? drag handle?)
+ * before they ship.
+ */
 @Composable
-private fun CompactInfoCard(
+private fun UpNextStrip(
+    items: List<dev.josu.hypecar.core.model.PlaybackItem>,
+    currentIndex: Int,
+    onJump: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    label: String,
-    value: String,
 ) {
-    Surface(
-        modifier = modifier,
-        color = Color(0xFF181719),
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, Color(0xFF302928)),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(
-                text = label,
-                color = Color(0xFFFFB08A),
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-            )
-            Text(
-                text = value,
-                color = Color.White,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+    val upcoming = remember(items, currentIndex) {
+        items.drop(currentIndex + 1).take(6)
+    }
+    if (upcoming.isEmpty()) return
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.player_up_next),
+            color = Color(0xFFE3DDD9),
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = FontWeight.SemiBold,
+            ),
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+        androidx.compose.foundation.lazy.LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(62.dp),
+        ) {
+            itemsIndexed(upcoming) { offset, item ->
+                val absoluteIndex = currentIndex + 1 + offset
+                UpNextTile(
+                    track = item.track,
+                    queueNumber = absoluteIndex + 1,
+                    onClick = { onJump(absoluteIndex) },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun NowPlayingTopBar(
-    onCollapse: () -> Unit,
-    onMore: () -> Unit,
+private fun UpNextTile(
+    track: dev.josu.hypecar.core.model.Track,
+    queueNumber: Int,
+    onClick: () -> Unit,
 ) {
-    Row(
+    val a11yLabel = stringResource(
+        R.string.player_track_in_queue_a11y,
+        track.title,
+        track.artist,
+    )
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF14100E),
+        border = BorderStroke(1.dp, Color(0x332A211D)),
         modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .width(238.dp)
+            .height(62.dp)
+            .pressFeedback(pressedScale = 0.96f, label = "upNextTilePress")
+            .semantics { contentDescription = a11yLabel },
     ) {
-        IconButton(onClick = onCollapse, modifier = Modifier.size(44.dp)) {
-            Icon(
-                imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = stringResource(R.string.player_collapse),
-                tint = Color(0xFFE3DDD9),
-                modifier = Modifier.size(28.dp),
+        Row(
+            modifier = Modifier.padding(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AsyncImage(
+                model = track.bestThumbnail(),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF26201D)),
+                contentScale = ContentScale.Crop,
             )
-        }
-        Text(
-            text = stringResource(R.string.player_top_bar_title),
-            color = Color(0xFFE3DDD9),
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-        )
-        IconButton(onClick = onMore, modifier = Modifier.size(44.dp)) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = stringResource(R.string.player_more_actions),
-                tint = Color(0xFFE3DDD9),
-                modifier = Modifier.size(24.dp),
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 10.dp, end = 8.dp),
+            ) {
+                Text(
+                    text = track.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = track.artist,
+                    color = Color(0xFFBBA89C),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = queueNumber.toString(),
+                color = Color(0x66E3DDD9),
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             )
         }
     }

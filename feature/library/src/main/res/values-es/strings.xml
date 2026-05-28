@@ -18,4 +18,11 @@
     <string name="library_signed_out_card_title">Abre tu biblioteca completa</string>
     <string name="library_signed_out_card_body">Inicia sesión para acceder a %1$s, mantener favoritos sincronizados y llevar la misma cola en el coche.</string>
     <string name="library_signed_out_card_button">Iniciar sesión</string>
+
+    <string name="library_profile_subtitle_favorites">\@%1$s · rotación guardada</string>
+    <string name="library_profile_subtitle_feed">\@%1$s · canal de seguidos</string>
+    <string name="library_profile_subtitle_playlists">\@%1$s · pilas de listas</string>
+    <string name="library_profile_subtitle_history">\@%1$s · recorrido reciente</string>
+
+    <string name="library_session_expired">Tu sesión expiró. Vuelve a iniciar sesión.</string>
 </resources>

@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Latest: rising arrow / lightning bolt over warm fill. -->
+    <path
+        android:fillColor="#FFC56A3B"
+        android:pathData="M0,0h96v96h-96z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M51,18 L30,54 L46,54 L42,78 L66,42 L50,42 L54,18 Z" />
+</vector>

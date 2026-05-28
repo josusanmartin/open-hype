@@ -1,6 +1,7 @@
 package dev.josu.hypecar.feature.library
 
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.FeedMode
@@ -40,7 +41,7 @@ class LibraryViewModelTest {
     fun `signed-out state stays empty for tabs that need a session`() = runTest {
         val auth = StubAuthRepository(MutableStateFlow(null))
         val me = ScriptedMeRepository(favorites = listOf(track("nope")))
-        val vm = LibraryViewModel(auth, me, NoOpPlaybackRepository)
+        val vm = LibraryViewModel(auth, me, NoOpPlaybackRepository, favoriteSyncManager(me))
 
         advanceUntilIdle()
 
@@ -53,7 +54,7 @@ class LibraryViewModelTest {
     fun `signed-in state pulls favorites by default`() = runTest {
         val sessionFlow = MutableStateFlow<AuthSession?>(AuthSession("alice", "tok"))
         val me = ScriptedMeRepository(favorites = listOf(track("a"), track("b")))
-        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository)
+        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository, favoriteSyncManager(me))
 
         advanceUntilIdle()
 
@@ -69,7 +70,7 @@ class LibraryViewModelTest {
             favorites = listOf(track("fav1")),
             feed = listOf(FeedItem(track("feed1"))),
         )
-        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository)
+        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository, favoriteSyncManager(me))
         advanceUntilIdle()
 
         vm.selectTab(LibraryTab.FEED.ordinal)
@@ -83,7 +84,7 @@ class LibraryViewModelTest {
     fun `history tab works without a session`() = runTest {
         val sessionFlow = MutableStateFlow<AuthSession?>(null)
         val me = ScriptedMeRepository(history = listOf(track("h1"), track("h2")))
-        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository)
+        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository, favoriteSyncManager(me))
         advanceUntilIdle()
 
         vm.selectTab(LibraryTab.HISTORY.ordinal)
@@ -99,6 +100,7 @@ class LibraryViewModelTest {
             StubAuthRepository(MutableStateFlow(AuthSession("alice", "tok"))),
             me,
             NoOpPlaybackRepository,
+            favoriteSyncManager(me),
         )
 
         advanceUntilIdle()
@@ -118,6 +120,7 @@ class LibraryViewModelTest {
             StubAuthRepository(MutableStateFlow(AuthSession("alice", "tok"))),
             me,
             NoOpPlaybackRepository,
+            favoriteSyncManager(me),
         )
         advanceUntilIdle()
         assertThat(vm.state.value.tracks).hasSize(30)
@@ -143,6 +146,7 @@ class LibraryViewModelTest {
             StubAuthRepository(MutableStateFlow(AuthSession("alice", "tok"))),
             me,
             NoOpPlaybackRepository,
+            favoriteSyncManager(me),
         )
         advanceUntilIdle()
 
@@ -167,6 +171,8 @@ class LibraryViewModelTest {
         postUrl = "",
         itunesUrl = "",
     )
+
+    private fun favoriteSyncManager(meRepository: MeRepository) = FavoriteSyncManager(meRepository)
 }
 
 private class StubAuthRepository(private val sessionFlow: MutableStateFlow<AuthSession?>) : AuthRepository {

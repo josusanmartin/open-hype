@@ -1,6 +1,5 @@
 package dev.josu.hypecar.feature.catalog
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -9,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.ui.HypeTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,7 +25,7 @@ class TrackListBodyScreenTest {
     @Test
     fun `loading state renders the spinner`() {
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     TrackListBody(
                         tracks = emptyList(),
@@ -46,7 +46,7 @@ class TrackListBodyScreenTest {
     fun `error state renders the message and Retry button when callback is wired`() {
         var retried = false
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     TrackListBody(
                         tracks = emptyList(),
@@ -69,7 +69,7 @@ class TrackListBodyScreenTest {
     @Test
     fun `empty state falls back to localized default when no message override is given`() {
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     TrackListBody(
                         tracks = emptyList(),
@@ -88,7 +88,7 @@ class TrackListBodyScreenTest {
     fun `tracks render their title and tapping a row fires onTrackClick with the right index`() {
         var tappedIndex: Int? = null
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     TrackListBody(
                         tracks = listOf(track("a", "Alpha"), track("b", "Beta")),
@@ -112,7 +112,7 @@ class TrackListBodyScreenTest {
     fun `blank artist title and blog fall back to localized Unknown placeholders`() {
         // Mappers leave fields empty when the API returns blanks; UI should localize.
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     TrackListBody(
                         tracks = listOf(track(id = "x", title = "", artist = "", postedBy = "")),

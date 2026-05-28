@@ -44,6 +44,8 @@ import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.catalog.EditorialHeroHeader
 import dev.josu.hypecar.feature.catalog.TrackListBody
 import dev.josu.hypecar.feature.catalog.rememberIsAutomotiveUi
@@ -252,9 +254,11 @@ private fun SearchControlPanel(
                 )
                 Button(
                     onClick = onSearch,
-                    modifier = Modifier.padding(top = if (compactMode) 2.dp else 8.dp),
+                    modifier = Modifier
+                        .pressFeedback(pressedScale = 0.94f, label = "searchButtonPress")
+                        .padding(top = if (compactMode) 2.dp else 8.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFFF8A3D),
+                        containerColor = hypeTokens.brand.primary,
                         contentColor = Color(0xFF19110E),
                     ),
                     shape = RoundedCornerShape(if (compactMode) 10.dp else 18.dp),
@@ -282,6 +286,10 @@ private fun SearchControlPanel(
                     items(tags, key = { it.name }) { tag ->
                         Surface(
                             onClick = { onTagClick(tag.name) },
+                            modifier = Modifier.pressFeedback(
+                                pressedScale = 0.95f,
+                                label = "searchTagPress",
+                            ),
                             shape = RoundedCornerShape(if (compactMode) 9.dp else 16.dp),
                             color = Color(0xFF241A17),
                             border = BorderStroke(1.dp, Color(0xFF5D4339)),

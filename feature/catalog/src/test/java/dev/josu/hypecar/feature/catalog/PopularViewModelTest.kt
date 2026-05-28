@@ -1,6 +1,7 @@
 package dev.josu.hypecar.feature.catalog
 
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
@@ -39,7 +40,7 @@ class PopularViewModelTest {
     @Test
     fun `init refresh loads popular tracks for default mode`() = runTest {
         val catalog = ScriptedPopularCatalog(popular = listOf(track("p1"), track("p2")))
-        val vm = PopularViewModel(catalog, NoOpPlayback, PopularNoOpMe)
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
 
         advanceUntilIdle()
 
@@ -50,7 +51,7 @@ class PopularViewModelTest {
     @Test
     fun `selectMode swaps to lastweek and refetches`() = runTest {
         val catalog = ScriptedPopularCatalog(popular = listOf(track("a")))
-        val vm = PopularViewModel(catalog, NoOpPlayback, PopularNoOpMe)
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
         advanceUntilIdle()
 
         vm.selectMode(PopularMode.LAST_WEEK.ordinal)
@@ -63,7 +64,7 @@ class PopularViewModelTest {
     @Test
     fun `selectMode is a no-op for the same index`() = runTest {
         val catalog = ScriptedPopularCatalog(popular = listOf(track("a")))
-        val vm = PopularViewModel(catalog, NoOpPlayback, PopularNoOpMe)
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
         advanceUntilIdle()
 
         vm.selectMode(PopularMode.NOW.ordinal)
@@ -75,7 +76,7 @@ class PopularViewModelTest {
     @Test
     fun `failed fetch lands in state with loading cleared`() = runTest {
         val catalog = ScriptedPopularCatalog(popularError = IOException("offline"))
-        val vm = PopularViewModel(catalog, NoOpPlayback, PopularNoOpMe)
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
 
         advanceUntilIdle()
 
@@ -90,7 +91,7 @@ class PopularViewModelTest {
         val catalog = ScriptedPopularCatalog(
             popularPages = mapOf(1 to Result.success(page1), 2 to Result.success(page2)),
         )
-        val vm = PopularViewModel(catalog, NoOpPlayback, PopularNoOpMe)
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
         advanceUntilIdle()
 
         vm.loadMore()
@@ -113,7 +114,7 @@ class PopularViewModelTest {
                 2 to Result.failure(IOException("flaky")),
             ),
         )
-        val vm = PopularViewModel(catalog, NoOpPlayback, PopularNoOpMe)
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
         advanceUntilIdle()
 
         vm.loadMore()
@@ -171,6 +172,8 @@ private object NoOpPlayback : PlaybackRepository {
     override suspend fun cycleRepeatMode() = Unit
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
 }
+
+private fun popularFavoriteSync() = FavoriteSyncManager(PopularNoOpMe)
 
 private object PopularNoOpMe : dev.josu.hypecar.core.model.repository.MeRepository {
     override suspend fun favorites(page: Int, count: Int): List<dev.josu.hypecar.core.model.Track> = emptyList()

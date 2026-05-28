@@ -9,7 +9,6 @@ data class PlayerScreenUiModel(
     val sourceLabel: String,
     val description: String,
     val artworkUrl: String?,
-    val queueLabel: String,
     val elapsedLabel: String,
     val remainingLabel: String,
     val positionMs: Long,
@@ -36,7 +35,6 @@ data class PlayerScreenUiModel(
                 sourceLabel = current.postedBy,
                 description = current.postDescription,
                 artworkUrl = current.bestThumbnail(),
-                queueLabel = "Queue position ${queue.currentIndex + 1} / ${queue.items.size}",
                 elapsedLabel = formatMs(positionMs),
                 remainingLabel = "-${formatMs((durationMs - positionMs).coerceAtLeast(0L))}",
                 positionMs = positionMs,
@@ -49,7 +47,8 @@ data class PlayerScreenUiModel(
             )
         }
 
-        private fun formatMs(value: Long): String {
+        /** Public so PlayerRoute can re-format time labels live during a scrub drag. */
+        fun formatMs(value: Long): String {
             val totalSeconds = value / 1000
             val minutes = totalSeconds / 60
             val seconds = totalSeconds % 60

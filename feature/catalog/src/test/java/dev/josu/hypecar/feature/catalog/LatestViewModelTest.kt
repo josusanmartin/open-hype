@@ -1,6 +1,7 @@
 package dev.josu.hypecar.feature.catalog
 
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
@@ -39,7 +40,7 @@ class LatestViewModelTest {
     @Test
     fun `init refresh loads latest tracks for default mode`() = runTest {
         val catalog = ScriptedCatalogRepository(latest = listOf(track("a"), track("b")))
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
 
         advanceUntilIdle()
 
@@ -52,7 +53,7 @@ class LatestViewModelTest {
     @Test
     fun `selectMode switches mode and refetches`() = runTest {
         val catalog = ScriptedCatalogRepository(latest = listOf(track("a")))
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
         advanceUntilIdle()
 
         vm.selectMode(LatestMode.ONLY_REMIXES.ordinal)
@@ -65,7 +66,7 @@ class LatestViewModelTest {
     @Test
     fun `selectMode is a no-op when index is unchanged`() = runTest {
         val catalog = ScriptedCatalogRepository(latest = listOf(track("a")))
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
         advanceUntilIdle()
 
         vm.selectMode(LatestMode.ALL.ordinal)
@@ -77,7 +78,7 @@ class LatestViewModelTest {
     @Test
     fun `errors land in state with loading cleared`() = runTest {
         val catalog = ScriptedCatalogRepository(latestError = IOException("offline"))
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
 
         advanceUntilIdle()
 
@@ -93,7 +94,7 @@ class LatestViewModelTest {
         val catalog = ScriptedCatalogRepository(
             latestPages = mapOf(1 to Result.success(page1), 2 to Result.success(page2)),
         )
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
         advanceUntilIdle()
         assertThat(vm.state.value.tracks).hasSize(30)
         assertThat(vm.state.value.hasMore).isTrue()
@@ -115,7 +116,7 @@ class LatestViewModelTest {
         val catalog = ScriptedCatalogRepository(
             latestPages = mapOf(1 to Result.success(page1), 2 to Result.success(page2)),
         )
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
         advanceUntilIdle()
 
         vm.loadMore()
@@ -137,7 +138,7 @@ class LatestViewModelTest {
                 3 to Result.success((1..30).map { track("p3-$it") }),
             ),
         )
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
         advanceUntilIdle()
 
         vm.loadMore()
@@ -159,7 +160,7 @@ class LatestViewModelTest {
         val catalog = ScriptedCatalogRepository(
             latestPages = mapOf(1 to Result.success(page1), 2 to Result.success((1..30).map { track("p2-$it") })),
         )
-        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
         advanceUntilIdle()
 
         // Kick off a loadMore; before it can complete, pull-to-refresh.
@@ -181,7 +182,7 @@ class LatestViewModelTest {
     fun `play forwards current tracks at index to playback repository`() = runTest {
         val playback = RecordingPlaybackRepository()
         val catalog = ScriptedCatalogRepository(latest = listOf(track("a"), track("b"), track("c")))
-        val vm = LatestViewModel(catalog, playback, LatestNoOpMe)
+        val vm = LatestViewModel(catalog, playback, latestFavoriteSync())
         advanceUntilIdle()
 
         vm.play(1)
@@ -267,6 +268,8 @@ private object NoOpPlaybackRepository : PlaybackRepository {
     override suspend fun cycleRepeatMode() = Unit
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
 }
+
+private fun latestFavoriteSync() = FavoriteSyncManager(LatestNoOpMe)
 
 private object LatestNoOpMe : dev.josu.hypecar.core.model.repository.MeRepository {
     override suspend fun favorites(page: Int, count: Int): List<dev.josu.hypecar.core.model.Track> = emptyList()

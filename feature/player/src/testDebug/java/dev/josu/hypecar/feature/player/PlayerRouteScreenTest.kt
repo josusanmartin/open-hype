@@ -1,6 +1,5 @@
 package dev.josu.hypecar.feature.player
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -17,6 +16,7 @@ import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
+import dev.josu.hypecar.core.ui.HypeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Rule
@@ -36,7 +36,7 @@ class PlayerRouteScreenTest {
     fun `idle player shows the empty-state message`() {
         val playback = StubPlayback(initial = PlaybackQueue())
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
             }
         }
@@ -56,7 +56,7 @@ class PlayerRouteScreenTest {
             ),
         )
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
             }
         }
@@ -65,6 +65,30 @@ class PlayerRouteScreenTest {
         composeRule.onNodeWithText("Brooklynzhen").assertIsDisplayed()
         // Play button content description (not text). When isPlaying=false the button reads "Play".
         composeRule.onNodeWithContentDescription("Play").assertIsDisplayed()
+    }
+
+    @Test
+    fun `active queue renders compact up next preview`() {
+        val now = sampleTrack("a", "Opening Track", "Artist A")
+        val next = sampleTrack("b", "Queued Track", "Artist B")
+        val third = sampleTrack("c", "Later Track", "Artist C")
+        val playback = StubPlayback(
+            initial = PlaybackQueue(
+                items = listOf(PlaybackItem(now), PlaybackItem(next), PlaybackItem(third)),
+                currentIndex = 0,
+                isPlaying = true,
+                durationMs = 100_000,
+            ),
+        )
+        composeRule.setContent {
+            HypeTheme {
+                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
+            }
+        }
+
+        composeRule.onNodeWithText("Up next").assertIsDisplayed()
+        composeRule.onNodeWithText("Queued Track").assertIsDisplayed()
+        composeRule.onNodeWithText("Artist B").assertIsDisplayed()
     }
 
     @Test
@@ -79,7 +103,7 @@ class PlayerRouteScreenTest {
             ),
         )
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
             }
         }
@@ -91,7 +115,7 @@ class PlayerRouteScreenTest {
     }
 
     @Test
-    fun `top bar shows Now Playing title with collapse and more actions buttons`() {
+    fun `phone player omits redundant top chrome and keeps transport visible`() {
         val track = sampleTrack("a", "Title", "Artist")
         val playback = StubPlayback(
             initial = PlaybackQueue(
@@ -102,14 +126,16 @@ class PlayerRouteScreenTest {
             ),
         )
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
             }
         }
 
-        composeRule.onNodeWithText("Now Playing").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Collapse").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("More actions").assertIsDisplayed()
+        assertThat(composeRule.onAllNodesWithContentDescription("Collapse").fetchSemanticsNodes()).isEmpty()
+        assertThat(composeRule.onAllNodesWithContentDescription("More actions").fetchSemanticsNodes()).isEmpty()
+        assertThat(
+            composeRule.onAllNodesWithContentDescription("Pause").fetchSemanticsNodes(),
+        ).isNotEmpty()
     }
 
     @Test
@@ -125,7 +151,7 @@ class PlayerRouteScreenTest {
         )
         val me = AcceptingMe(toggleResult = true)
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { PlayerRoute(viewModel = PlayerViewModel(playback, me)) }
             }
         }

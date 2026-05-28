@@ -74,6 +74,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import dagger.hilt.android.AndroidEntryPoint
+import dev.josu.hypecar.core.ui.HypeTheme
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.auth.LoginRoute
 import dev.josu.hypecar.feature.catalog.LatestRoute
 import dev.josu.hypecar.feature.catalog.PopularRoute
@@ -98,7 +101,19 @@ class MainActivity : ComponentActivity() {
             ),
         )
         setContent {
-            AppTheme {
+            // Compute the automotive flag at the activity level so the theme
+            // can swap in the smaller mini-player metrics before the first
+            // composition tree is laid out. Same heuristic the catalog module
+            // exposes via rememberIsAutomotiveUi, kept inline here so the
+            // theme call site stays self-contained.
+            val context = LocalContext.current
+            val uiMode = context.resources.configuration.uiMode
+            val isAutomotive = context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
+                (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR ||
+                Build.PRODUCT.contains("gcar", ignoreCase = true) ||
+                Build.DEVICE.contains("car", ignoreCase = true) ||
+                Build.FINGERPRINT.contains("gcar", ignoreCase = true)
+            HypeTheme(isAutomotive = isAutomotive) {
                 MainApp()
             }
         }
@@ -135,7 +150,9 @@ internal data class AppChromeMetrics(
             miniPlayerProgressHorizontalPadding = 8.dp,
             miniPlayerProgressHeight = 2.dp,
             miniPlayerBottomSpacer = 4.dp,
-            miniPlayerIconButtonSize = 40.dp,
+            // Bumped 40→44dp (the smallest size that still passes M3
+            // minimumInteractiveSize) per the design-review touch-target audit.
+            miniPlayerIconButtonSize = 44.dp,
             miniPlayerIconSize = 22.dp,
         )
 
@@ -149,7 +166,8 @@ internal data class AppChromeMetrics(
             miniPlayerProgressHorizontalPadding = 10.dp,
             miniPlayerProgressHeight = 3.dp,
             miniPlayerBottomSpacer = 6.dp,
-            miniPlayerIconButtonSize = 42.dp,
+            // Bumped 42→48dp to clear Material's recommended minimum.
+            miniPlayerIconButtonSize = 48.dp,
             miniPlayerIconSize = 22.dp,
         )
     }
@@ -158,19 +176,15 @@ internal data class AppChromeMetrics(
 @Composable
 fun MainApp() {
     val navController = rememberNavController()
-    val context = LocalContext.current
-    val uiMode = context.resources.configuration.uiMode
-    val isAutomotive = remember(context, uiMode) {
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
-            (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR ||
-            Build.PRODUCT.contains("gcar", ignoreCase = true) ||
-            Build.DEVICE.contains("car", ignoreCase = true) ||
-            Build.FINGERPRINT.contains("gcar", ignoreCase = true)
-    }
+    // The activity computes the automotive flag once and provides it through
+    // HypeTheme; reading the composition local here keeps the value in sync
+    // with the active token table (mini-player metrics, padding etc.).
+    val isAutomotive = dev.josu.hypecar.core.ui.LocalIsAutomotive.current
     val chromeMetrics = if (isAutomotive) AppChromeMetrics.automotive() else AppChromeMetrics.phone()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val chromeViewModel: AppChromeViewModel = hiltViewModel()
     val queue by chromeViewModel.queue.collectAsStateWithLifecycle()
+    val connectivity by chromeViewModel.connectivity.collectAsStateWithLifecycle()
     MediaNotificationPermissionGate(
         enabled = !isAutomotive && (queue.isPlaying || queue.current != null),
     )
@@ -199,14 +213,34 @@ fun MainApp() {
         null
     }
 
+    // Listen for SessionEventBus emissions (UnauthorizedSessionInterceptor
+    // emits Expired on 401) and surface a snackbar so the user isn't
+    // silently signed out into an empty Library.
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+    val sessionExpiredText = stringResource(R.string.app_session_expired)
+    LaunchedEffect(Unit) {
+        dev.josu.hypecar.core.model.SessionEventBus.events.collect { event ->
+            when (event) {
+                is dev.josu.hypecar.core.model.SessionEvent.Expired ->
+                    snackbarHostState.showSnackbar(sessionExpiredText)
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (showBottomBar || miniPlayer != null) {
+            // Show the bottom chrome column when any of: the bottom nav is
+            // visible, the mini-player has a track, or the connectivity
+            // banner needs to surface (so the offline note isn't hidden on
+            // routes that hide the nav).
+            val showOfflineBanner = connectivity != dev.josu.hypecar.core.model.repository.Connectivity.Online
+            if (showBottomBar || miniPlayer != null || showOfflineBanner) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF0E0E0F))
+                        .background(hypeTokens.chrome.canvas)
                         .then(
                             if (chromeMetrics.bottomBarUsesExternalSystemBarPadding) {
                                 Modifier.navigationBarsPadding()
@@ -215,6 +249,13 @@ fun MainApp() {
                             },
                         ),
                 ) {
+                    // Connectivity banner sits above the mini-player + nav bar
+                    // so any time the user leaves Online they see "showing
+                    // cached data" without it shoving content off the screen.
+                    dev.josu.hypecar.core.ui.ConnectivityBanner(
+                        isOffline = connectivity == dev.josu.hypecar.core.model.repository.Connectivity.Offline,
+                        isLimited = connectivity == dev.josu.hypecar.core.model.repository.Connectivity.Limited,
+                    )
                     miniPlayer?.let { miniPlayerState ->
                         val haptics = LocalHapticFeedback.current
                         val tick: () -> Unit = {
@@ -243,7 +284,7 @@ fun MainApp() {
                     if (showBottomBar) {
                         NavigationBar(
                             modifier = chromeMetrics.bottomNavHeight?.let { Modifier.height(it) } ?: Modifier,
-                            containerColor = Color(0xFF0E0E0F),
+                            containerColor = hypeTokens.chrome.canvas,
                             windowInsets = WindowInsets(0, 0, 0, 0),
                         ) {
                             destinations.forEach { destination ->
@@ -275,10 +316,10 @@ fun MainApp() {
                                         )
                                     },
                                     colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Color(0xFFFF8A3D),
-                                        selectedTextColor = Color(0xFFFF8A3D),
-                                        unselectedIconColor = Color(0xFF8C8986),
-                                        unselectedTextColor = Color(0xFF8C8986),
+                                        selectedIconColor = hypeTokens.chrome.navSelected,
+                                        selectedTextColor = hypeTokens.chrome.navSelected,
+                                        unselectedIconColor = hypeTokens.chrome.navUnselected,
+                                        unselectedTextColor = hypeTokens.chrome.navUnselected,
                                         indicatorColor = Color.Transparent,
                                     ),
                                 )
@@ -326,19 +367,28 @@ fun MainApp() {
                 route = "blog/{blogId}",
                 arguments = listOf(navArgument("blogId") { type = NavType.IntType }),
             ) {
-                BlogDetailRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") })
+                BlogDetailRoute(
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(
                 route = "user/{username}",
                 arguments = listOf(navArgument("username") { type = NavType.StringType }),
             ) {
-                UserDetailRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") })
+                UserDetailRoute(
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(
                 route = "tag/{tag}",
                 arguments = listOf(navArgument("tag") { type = NavType.StringType }),
             ) {
-                TagDetailRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") })
+                TagDetailRoute(
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
     }
@@ -378,7 +428,7 @@ internal fun MiniPlayerBar(
     val compactMode = metrics.bottomNavHeight != null
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = Color(0xFF111112),
+        color = hypeTokens.chrome.miniPlayerSurface,
         contentColor = Color.White,
     ) {
         Column {
@@ -398,13 +448,21 @@ internal fun MiniPlayerBar(
                     modifier = Modifier
                         .size(metrics.miniPlayerArtSize)
                         .clip(RoundedCornerShape(6.dp))
-                        .clickable(onClick = onOpenPlayer),
+                        .pressFeedback(pressedScale = 0.94f, label = "miniPlayerArtworkPress")
+                        .clickable(
+                            role = androidx.compose.ui.semantics.Role.Button,
+                            onClick = onOpenPlayer,
+                        ),
                     contentScale = ContentScale.Crop,
                 )
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable(onClick = onOpenPlayer),
+                        .pressFeedback(pressedScale = 0.985f, label = "miniPlayerTextPress")
+                        .clickable(
+                            role = androidx.compose.ui.semantics.Role.Button,
+                            onClick = onOpenPlayer,
+                        ),
                 ) {
                     Text(
                         text = uiState.title,
@@ -422,11 +480,16 @@ internal fun MiniPlayerBar(
                         style = if (compactMode) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        color = Color(0xFFD2D2D2),
+                        color = hypeTokens.chrome.miniPlayerArtist,
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onSkipPrevious, modifier = Modifier.size(metrics.miniPlayerIconButtonSize)) {
+                    IconButton(
+                        onClick = onSkipPrevious,
+                        modifier = Modifier
+                            .size(metrics.miniPlayerIconButtonSize)
+                            .pressFeedback(pressedScale = 0.90f, label = "miniPlayerPreviousPress"),
+                    ) {
                         Icon(
                             Icons.Default.SkipPrevious,
                             contentDescription = stringResource(R.string.action_previous),
@@ -434,7 +497,12 @@ internal fun MiniPlayerBar(
                             modifier = Modifier.size(metrics.miniPlayerIconSize),
                         )
                     }
-                    IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(metrics.miniPlayerIconButtonSize)) {
+                    IconButton(
+                        onClick = onTogglePlayPause,
+                        modifier = Modifier
+                            .size(metrics.miniPlayerIconButtonSize)
+                            .pressFeedback(pressedScale = 0.90f, label = "miniPlayerPlayPausePress"),
+                    ) {
                         Icon(
                             imageVector = if (uiState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = stringResource(
@@ -444,7 +512,12 @@ internal fun MiniPlayerBar(
                             modifier = Modifier.size(metrics.miniPlayerIconSize),
                         )
                     }
-                    IconButton(onClick = onSkipNext, modifier = Modifier.size(metrics.miniPlayerIconButtonSize)) {
+                    IconButton(
+                        onClick = onSkipNext,
+                        modifier = Modifier
+                            .size(metrics.miniPlayerIconButtonSize)
+                            .pressFeedback(pressedScale = 0.90f, label = "miniPlayerNextPress"),
+                    ) {
                         Icon(
                             Icons.Default.SkipNext,
                             contentDescription = stringResource(R.string.action_next),
@@ -452,7 +525,12 @@ internal fun MiniPlayerBar(
                             modifier = Modifier.size(metrics.miniPlayerIconSize),
                         )
                     }
-                    IconButton(onClick = onOpenPlayer, modifier = Modifier.size(metrics.miniPlayerIconButtonSize)) {
+                    IconButton(
+                        onClick = onOpenPlayer,
+                        modifier = Modifier
+                            .size(metrics.miniPlayerIconButtonSize)
+                            .pressFeedback(pressedScale = 0.90f, label = "miniPlayerOpenPress"),
+                    ) {
                         Icon(
                             Icons.Default.KeyboardArrowUp,
                             contentDescription = stringResource(R.string.action_open_player),
@@ -470,8 +548,8 @@ internal fun MiniPlayerBar(
                     .padding(horizontal = metrics.miniPlayerProgressHorizontalPadding)
                     .height(metrics.miniPlayerProgressHeight)
                     .clip(RoundedCornerShape(2.dp)),
-                color = Color(0xFFFF8A3D),
-                trackColor = Color(0xFF434346),
+                color = hypeTokens.playerProgress.active,
+                trackColor = hypeTokens.playerProgress.track,
             )
             Spacer(modifier = Modifier.height(metrics.miniPlayerBottomSpacer))
         }

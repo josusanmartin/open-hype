@@ -20,6 +20,14 @@ android {
     lint {
         checkTestSources = false
     }
+    testOptions {
+        unitTests {
+            // Robolectric-driven tests in this module (HypeMediaLibraryCallbackMetadataTest,
+            // HypeMediaLibraryCallbackBrowseTest) read Auto-facing strings via Context.getString,
+            // so the test classpath must include the merged Android resources.
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -29,6 +37,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media.compat)
     implementation(libs.okhttp.core)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.guava)
@@ -38,4 +47,5 @@ dependencies {
     testImplementation(libs.junit4)
     testImplementation(libs.truth)
     testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

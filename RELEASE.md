@@ -13,6 +13,8 @@ export HYPE_RELEASE_KEY_ALIAS='...'
 export HYPE_RELEASE_KEY_PASSWORD='...'
 ```
 
+For GitHub Actions, prefer storing the keystore file as a base64 secret named `HYPE_RELEASE_KEYSTORE_BASE64`; the workflow restores it to a temporary file and exports `HYPE_RELEASE_STORE_FILE` automatically. The password and alias secrets use the same names as the environment variables above.
+
 Then build the Play Store bundle:
 
 ```bash
@@ -25,11 +27,11 @@ The signed bundle is written to:
 app/build/outputs/bundle/release/app-release.aab
 ```
 
-If the signing variables are not set, Gradle still produces an unsigned release artifact for local verification.
+If the signing variables are not set, Gradle fails release packaging before producing APK/AAB outputs. Use debug builds for local verification.
 
 ## Store Review
 
 - Use neutral wording: this is an unofficial open-source Hype Machine client.
 - Complete Play Data Safety based on the actual app behavior: account username/token storage, network requests to Hype Machine, and playback metadata.
 - Do not claim affiliation with Hype Machine.
-- Re-run `./gradlew testDebugUnitTest lintDebug assembleRelease bundleRelease` before uploading.
+- Re-run `./gradlew spotlessCheck checkArchitecture testDebugUnitTest testReleaseUnitTest lintDebug lintRelease koverVerify assembleRelease bundleRelease` before uploading.

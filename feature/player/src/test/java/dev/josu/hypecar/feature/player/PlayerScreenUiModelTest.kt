@@ -43,7 +43,6 @@ class PlayerScreenUiModelTest {
         assertThat(model?.artist).isEqualTo("L.A. Sagne")
         assertThat(model?.sourceLabel).isEqualTo("Destroy//Exist")
         assertThat(model?.description).isEqualTo("After a run of singles.")
-        assertThat(model?.queueLabel).isEqualTo("Queue position 1 / 1")
         assertThat(model?.elapsedLabel).isEqualTo("1:24")
         assertThat(model?.remainingLabel).isEqualTo("-2:23")
         assertThat(model?.progressFraction).isEqualTo(84f / 227f)

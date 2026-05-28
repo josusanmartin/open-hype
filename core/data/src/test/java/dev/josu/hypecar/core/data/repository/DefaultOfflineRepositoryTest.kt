@@ -56,6 +56,7 @@ class DefaultOfflineRepositoryTest {
 
     @After
     fun tearDown() {
+        WorkManagerTestInitHelper.closeWorkDatabase()
         server.shutdown()
         context.preferencesDataStoreFile("offline.preferences_pb").delete()
         File(context.filesDir, "offline_audio").deleteRecursively()

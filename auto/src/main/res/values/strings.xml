@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Top-level browse sections shown on the Android Auto HUD. -->
+    <string name="auto_root_title">Hype</string>
+    <string name="auto_section_latest_title">Latest</string>
+    <string name="auto_section_latest_subtitle">Newest blog posts</string>
+    <string name="auto_section_popular_title">Popular</string>
+    <string name="auto_section_popular_subtitle">Most loved right now</string>
+    <string name="auto_section_favorites_title">Favorites</string>
+    <string name="auto_section_favorites_subtitle">Tracks you\'ve loved</string>
+    <string name="auto_section_more_title">More</string>
+    <string name="auto_section_more_subtitle">Feed, playlists, history</string>
+    <string name="auto_section_feed_title">Feed</string>
+    <string name="auto_section_feed_subtitle">Updates from people you follow</string>
+    <string name="auto_section_playlists_title">Playlists</string>
+    <string name="auto_section_playlists_subtitle">Your saved playlists</string>
+    <string name="auto_section_history_title">History</string>
+    <string name="auto_section_history_subtitle">Recently played</string>
+
+    <!-- Sign-in prompt shown when an authenticated section is browsed without a session. -->
+    <string name="auto_signin_title">Sign in on your phone</string>
+    <string name="auto_signin_subtitle">Open Hype on your phone to use Favorites, Feed and Playlists.</string>
+    <string name="auto_private_unavailable_title">Open Hype on your phone</string>
+    <string name="auto_private_unavailable_subtitle">Refresh your session or connection, then try this section again.</string>
+
+    <!-- Empty-state items for sections that return zero rows. -->
+    <string name="auto_empty_favorites_title">No favorites yet</string>
+    <string name="auto_empty_favorites_subtitle">Open Hype on your phone to start loving tracks.</string>
+    <string name="auto_empty_feed_title">Nothing in your feed</string>
+    <string name="auto_empty_feed_subtitle">Follow blogs or users to populate your feed.</string>
+    <string name="auto_empty_playlists_title">No playlists yet</string>
+    <string name="auto_empty_playlists_subtitle">Create a playlist on the phone to listen here.</string>
+    <string name="auto_empty_history_title">No recent listens</string>
+    <string name="auto_empty_history_subtitle">Tracks you play will appear here.</string>
+    <string name="auto_empty_generic_title">Nothing here yet</string>
+
+    <!-- Custom command labels on the Now Playing surface. -->
+    <string name="auto_action_previous">Previous</string>
+    <string name="auto_action_next">Next</string>
+    <string name="auto_action_favorite">Favorite</string>
+    <string name="auto_action_unfavorite">Unfavorite</string>
+
+    <!-- Generic fallbacks. -->
+    <string name="auto_playlist_fallback_name">Playlist %1$d</string>
+</resources>

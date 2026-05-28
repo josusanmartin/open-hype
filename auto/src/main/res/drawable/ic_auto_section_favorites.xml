@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Favorites: filled heart on cream. -->
+    <path
+        android:fillColor="#FFF7F1E8"
+        android:pathData="M0,0h96v96h-96z" />
+    <path
+        android:fillColor="#FFC56A3B"
+        android:pathData="M48,80 L42,75 C22,57.5 8,45.5 8,30.5 C8,18.4 17.9,9 30,9 C36.8,9 43.4,12.2 48,17.2 C52.6,12.2 59.2,9 66,9 C78.1,9 88,18.4 88,30.5 C88,45.5 74,57.5 54,75 L48,80 Z" />
+</vector>

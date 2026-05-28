@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="auto_root_title">Hype</string>
+    <string name="auto_section_latest_title">Recientes</string>
+    <string name="auto_section_latest_subtitle">Últimas publicaciones de blogs</string>
+    <string name="auto_section_popular_title">Popular</string>
+    <string name="auto_section_popular_subtitle">Lo más amado ahora</string>
+    <string name="auto_section_favorites_title">Favoritos</string>
+    <string name="auto_section_favorites_subtitle">Pistas que has amado</string>
+    <string name="auto_section_more_title">Más</string>
+    <string name="auto_section_more_subtitle">Feed, listas, historial</string>
+    <string name="auto_section_feed_title">Feed</string>
+    <string name="auto_section_feed_subtitle">Actualizaciones de quien sigues</string>
+    <string name="auto_section_playlists_title">Listas</string>
+    <string name="auto_section_playlists_subtitle">Tus listas guardadas</string>
+    <string name="auto_section_history_title">Historial</string>
+    <string name="auto_section_history_subtitle">Reproducido recientemente</string>
+
+    <string name="auto_signin_title">Inicia sesión en tu teléfono</string>
+    <string name="auto_signin_subtitle">Abre Hype en el teléfono para usar Favoritos, Feed y Listas.</string>
+    <string name="auto_private_unavailable_title">Abre Hype en tu teléfono</string>
+    <string name="auto_private_unavailable_subtitle">Actualiza tu sesión o conexión y vuelve a intentar esta sección.</string>
+
+    <string name="auto_empty_favorites_title">Aún no tienes favoritos</string>
+    <string name="auto_empty_favorites_subtitle">Abre Hype en el teléfono para empezar a amar pistas.</string>
+    <string name="auto_empty_feed_title">Nada en tu feed</string>
+    <string name="auto_empty_feed_subtitle">Sigue blogs o usuarios para llenar tu feed.</string>
+    <string name="auto_empty_playlists_title">Sin listas todavía</string>
+    <string name="auto_empty_playlists_subtitle">Crea una lista en el teléfono para escucharla aquí.</string>
+    <string name="auto_empty_history_title">Sin reproducciones recientes</string>
+    <string name="auto_empty_history_subtitle">Las pistas que reproduzcas aparecerán aquí.</string>
+    <string name="auto_empty_generic_title">Aún no hay nada aquí</string>
+
+    <string name="auto_action_previous">Anterior</string>
+    <string name="auto_action_next">Siguiente</string>
+    <string name="auto_action_favorite">Favorito</string>
+    <string name="auto_action_unfavorite">Quitar favorito</string>
+
+    <string name="auto_playlist_fallback_name">Lista %1$d</string>
+</resources>

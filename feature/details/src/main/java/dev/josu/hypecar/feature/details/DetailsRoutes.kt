@@ -1,18 +1,29 @@
 package dev.josu.hypecar.feature.details
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -31,6 +42,8 @@ import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.catalog.EditorialHeroHeader
 import dev.josu.hypecar.feature.catalog.TrackListBody
 import dev.josu.hypecar.feature.catalog.rememberIsAutomotiveUi
@@ -145,6 +158,7 @@ class TagDetailViewModel @Inject constructor(
 @Composable
 fun BlogDetailRoute(
     onBlogClick: (Int) -> Unit,
+    onBack: (() -> Unit)? = null,
     viewModel: BlogDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -168,6 +182,7 @@ fun BlogDetailRoute(
         error = state.error,
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
+        onBack = onBack,
     )
 }
 
@@ -175,6 +190,7 @@ fun BlogDetailRoute(
 @Composable
 fun UserDetailRoute(
     onBlogClick: (Int) -> Unit,
+    onBack: (() -> Unit)? = null,
     viewModel: UserDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -209,6 +225,26 @@ fun UserDetailRoute(
                         color = Color(0xFF151211),
                         contentColor = Color.White,
                     ) {
+                        // Format the three counts here so they go through the
+                        // resource system. The model carries raw integers now
+                        // (see UserProfileHeaderUiModel for context).
+                        val favoritesLabel = androidx.compose.ui.res.pluralStringResource(
+                            id = R.plurals.user_profile_favorites,
+                            count = profile.favoritesCount,
+                            profile.favoritesCount,
+                        )
+                        val followersLabel = androidx.compose.ui.res.pluralStringResource(
+                            id = R.plurals.user_profile_followers,
+                            count = profile.followersCount,
+                            profile.followersCount,
+                        )
+                        val followingLabel = androidx.compose.ui.res.pluralStringResource(
+                            id = R.plurals.user_profile_following,
+                            count = profile.followingCount,
+                            profile.followingCount,
+                        )
+                        val statChips = listOf(favoritesLabel, followersLabel, followingLabel)
+                        val summaryLine = statChips.joinToString(separator = " · ")
                         Column(
                             modifier = Modifier.padding(
                                 horizontal = if (isAutomotive) 12.dp else 16.dp,
@@ -216,14 +252,14 @@ fun UserDetailRoute(
                             ),
                         ) {
                             Text(
-                                text = profile.summaryLine,
+                                text = summaryLine,
                                 style = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFFE7D7C9)),
                             )
                             FlowRow(
                                 modifier = Modifier.padding(top = 12.dp),
                                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
                             ) {
-                                profile.stats.forEach { stat ->
+                                statChips.forEach { stat ->
                                     Surface(
                                         shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 10.dp else 16.dp),
                                         color = Color(0xFF2B211E),
@@ -234,7 +270,7 @@ fun UserDetailRoute(
                                                 horizontal = if (isAutomotive) 8.dp else 12.dp,
                                                 vertical = if (isAutomotive) 5.dp else 8.dp,
                                             ),
-                                            style = MaterialTheme.typography.labelLarge.copy(color = Color(0xFFFFC4A2)),
+                                            style = MaterialTheme.typography.labelLarge.copy(color = hypeTokens.brand.primaryWash),
                                         )
                                     }
                                 }
@@ -252,6 +288,7 @@ fun UserDetailRoute(
 @Composable
 fun TagDetailRoute(
     onBlogClick: (Int) -> Unit,
+    onBack: (() -> Unit)? = null,
     viewModel: TagDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -265,6 +302,7 @@ fun TagDetailRoute(
         error = state.error,
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
+        onBack = onBack,
     )
 }
 
@@ -279,6 +317,7 @@ private fun EditorialDetailFeed(
     error: String?,
     onTrackClick: (Int) -> Unit,
     onBlogClick: (Track) -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     val isAutomotive = rememberIsAutomotiveUi()
     TrackListBody(
@@ -286,46 +325,77 @@ private fun EditorialDetailFeed(
         isLoading = isLoading,
         error = error,
         header = {
-            Column {
-                EditorialHeroHeader(
-                    title = title,
-                    subtitle = subtitle,
-                    imageUrl = imageUrl,
-                    chips = emptyList(),
-                    selectedChipIndex = 0,
-                    onChipSelected = {},
-                    onUtilityClick = null,
-                    height = 238.dp,
-                    titleSize = 40.sp,
-                    titleLineHeight = 40.sp,
-                    compactMode = isAutomotive,
-                )
-                if (stats.isNotEmpty()) {
-                    LazyRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                horizontal = if (isAutomotive) 8.dp else 12.dp,
-                                vertical = if (isAutomotive) 6.dp else 12.dp,
-                            ),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(if (isAutomotive) 6.dp else 10.dp),
-                    ) {
-                        items(stats) { stat ->
-                            Surface(
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 10.dp else 16.dp),
-                                color = Color(0xFF151211),
-                                contentColor = Color(0xFFFFC4A2),
-                            ) {
-                                Text(
-                                    text = stat,
-                                    modifier = Modifier.padding(
-                                        horizontal = if (isAutomotive) 9.dp else 14.dp,
-                                        vertical = if (isAutomotive) 6.dp else 10.dp,
-                                    ),
-                                    fontWeight = FontWeight.SemiBold,
-                                )
+            // Detail screens previously had no back affordance — only the
+            // system gesture. Render a small back arrow in the top-left so
+            // 3-button-nav users have a visible way out.
+            androidx.compose.foundation.layout.Box {
+                Column {
+                    EditorialHeroHeader(
+                        title = title,
+                        subtitle = subtitle,
+                        imageUrl = imageUrl,
+                        chips = emptyList(),
+                        selectedChipIndex = 0,
+                        onChipSelected = {},
+                        onUtilityClick = null,
+                        height = 238.dp,
+                        titleSize = 40.sp,
+                        titleLineHeight = 40.sp,
+                        compactMode = isAutomotive,
+                    )
+                    if (stats.isNotEmpty()) {
+                        LazyRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    horizontal = if (isAutomotive) 8.dp else 12.dp,
+                                    vertical = if (isAutomotive) 6.dp else 12.dp,
+                                ),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(if (isAutomotive) 6.dp else 10.dp),
+                        ) {
+                            items(stats) { stat ->
+                                Surface(
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 10.dp else 16.dp),
+                                    color = Color(0xFF151211),
+                                    contentColor = hypeTokens.brand.primaryWash,
+                                ) {
+                                    Text(
+                                        text = stat,
+                                        modifier = Modifier.padding(
+                                            horizontal = if (isAutomotive) 9.dp else 14.dp,
+                                            vertical = if (isAutomotive) 6.dp else 10.dp,
+                                        ),
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                             }
                         }
+                    }
+                }
+                if (onBack != null) {
+                    androidx.compose.material3.IconButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.TopStart)
+                            .padding(
+                                start = 8.dp,
+                                top = androidx.compose.foundation.layout.WindowInsets.statusBars
+                                    .asPaddingValues()
+                                    .calculateTopPadding() + 4.dp,
+                            )
+                            .size(44.dp)
+                            .pressFeedback(pressedScale = 0.90f, label = "detailBackPress"),
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.details_back),
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(Color(0x66000000))
+                                .padding(2.dp),
+                        )
                     }
                 }
             }

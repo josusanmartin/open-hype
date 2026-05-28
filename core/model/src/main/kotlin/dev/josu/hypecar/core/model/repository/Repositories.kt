@@ -118,3 +118,29 @@ interface OfflineRepository {
 
     fun cachedAudioUri(trackId: String): String?
 }
+
+/**
+ * Coarse description of the device's network reachability, surfaced by
+ * [ConnectivityRepository]. The UI banner displays a warning whenever the
+ * value transitions away from [Online], so the user knows that any lists or
+ * favorites they see are coming from the offline cache.
+ */
+enum class Connectivity {
+    /** Fully online — at least one validated default network is available. */
+    Online,
+
+    /** Captive portal / metered / restricted — connected but degraded. */
+    Limited,
+
+    /** No network. */
+    Offline,
+}
+
+interface ConnectivityRepository {
+    /**
+     * Hot stream of the current connectivity state. Emits the latest value
+     * to new collectors immediately so a banner can render on first
+     * composition without waiting for a network change.
+     */
+    val connectivity: StateFlow<Connectivity>
+}

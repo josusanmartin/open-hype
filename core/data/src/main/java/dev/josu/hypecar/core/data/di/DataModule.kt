@@ -12,6 +12,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.josu.hypecar.core.data.BuildConfig
 import dev.josu.hypecar.core.data.local.HypeDatabase
+import dev.josu.hypecar.core.data.net.AndroidConnectivityRepository
 import dev.josu.hypecar.core.data.net.ResilientDns
 import dev.josu.hypecar.core.data.repository.DefaultAuthRepository
 import dev.josu.hypecar.core.data.repository.DefaultCatalogRepository
@@ -23,6 +24,7 @@ import dev.josu.hypecar.core.data.repository.HypeSessionStore
 import dev.josu.hypecar.core.data.repository.UnauthorizedSessionInterceptor
 import dev.josu.hypecar.core.model.repository.AuthRepository
 import dev.josu.hypecar.core.model.repository.CatalogRepository
+import dev.josu.hypecar.core.model.repository.ConnectivityRepository
 import dev.josu.hypecar.core.model.repository.HistoryRepository
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.OfflineRepository
@@ -196,6 +198,11 @@ object DataModule {
         client: OkHttpClient,
         json: Json,
     ): OfflineRepository = DefaultOfflineRepository(context, meRepository, client, json)
+
+    @Provides
+    @Singleton
+    fun provideConnectivityRepository(@ApplicationContext context: Context): ConnectivityRepository =
+        AndroidConnectivityRepository(context)
 }
 
 internal object ApiBaseUrlSelector {

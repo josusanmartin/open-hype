@@ -1,4 +1,5 @@
 <resources>
+    <string name="details_back">Atrás</string>
     <string name="details_blog_default_title">Blog</string>
     <plurals name="details_blog_followers">
         <item quantity="one">%1$d seguidor</item>
@@ -12,4 +13,17 @@
     <string name="details_user_default_handle">Perfil de oyente</string>
     <string name="details_tag_subtitle">Flujo por etiqueta</string>
     <string name="details_tag_stat">Cortes etiquetados</string>
+
+    <plurals name="user_profile_favorites">
+        <item quantity="one">%1$d favorito</item>
+        <item quantity="other">%1$d favoritos</item>
+    </plurals>
+    <plurals name="user_profile_followers">
+        <item quantity="one">%1$d seguidor</item>
+        <item quantity="other">%1$d seguidores</item>
+    </plurals>
+    <plurals name="user_profile_following">
+        <item quantity="one">%1$d seguido</item>
+        <item quantity="other">%1$d seguidos</item>
+    </plurals>
 </resources>

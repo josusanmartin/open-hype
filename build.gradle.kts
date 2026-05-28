@@ -92,6 +92,7 @@ dependencies {
     kover(project(":core:network"))
     kover(project(":core:data"))
     kover(project(":core:playback"))
+    kover(project(":core:ui"))
     kover(project(":feature:auth"))
     kover(project(":feature:catalog"))
     kover(project(":feature:details"))

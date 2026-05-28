@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="connectivity_banner_offline">You\'re offline — showing cached data.</string>
+    <string name="connectivity_banner_limited">Limited connection — some content may be stale.</string>
+    <string name="skeleton_loading">Loading</string>
+</resources>

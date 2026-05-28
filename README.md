@@ -19,17 +19,23 @@ Unofficial open-source Hype Machine client for Android phones and Android Auto /
 | --- | --- | --- | --- |
 | <img src="docs/screenshots/phone-latest.png" width="180" alt="Latest screen with mode chips and like-on-card hearts" /> | <img src="docs/screenshots/phone-player.png" width="180" alt="Full-screen player with breathing warm halo and ambient bottom haze" /> | <img src="docs/screenshots/phone-popular.png" width="180" alt="Popular screen with rank numbers" /> | <img src="docs/screenshots/phone-settings.png" width="180" alt="Offline settings with storage slider and version footer" /> |
 
-### Android Automotive (AAOS) — system Media Templates
+### Android Auto / Automotive — system Media Templates
 
-What you actually see in a car: the head unit's media app renders our `MediaLibraryService` through the AAOS Media Templates — same surface Spotify, YouTube Music, etc. use. Browse roots come from our `MediaLibrarySession.Callback`; the playback chrome is system-rendered.
+What you actually see in a car: the head unit's media app renders our `MediaLibraryService` through the Android Auto / Automotive Media Templates — the same system surface Spotify, YouTube Music, etc. use. Browse roots come from our `MediaLibrarySession.Callback`; the playback chrome is system-rendered.
 
-| Latest | Popular | Now Playing | Signed-out Favorites |
-| --- | --- | --- | --- |
-| <img src="docs/screenshots/car-latest.png" width="380" alt="Templated Latest browse at 1920x1080 showing list rows for fresh tracks" /> | <img src="docs/screenshots/car-popular.png" width="380" alt="Templated Popular browse with chart-style track list" /> | <img src="docs/screenshots/car-player.png" width="380" alt="Templated Now Playing with skip-prev / play / skip-next plus the favorite heart in the overflow slot" /> | <img src="docs/screenshots/car-favorites.png" width="380" alt="Favorites tab without a session shows a clean empty state instead of a system error" /> |
+| Latest | Popular | Favorites |
+| --- | --- | --- |
+| <img src="docs/screenshots/android-auto-latest.jpg" width="380" alt="Projected Android Auto split-screen Latest tab with Hype tracks beside Maps" /> | <img src="docs/screenshots/android-auto-popular.jpg" width="380" alt="Projected Android Auto split-screen Popular tab with compact track rows beside Maps" /> | <img src="docs/screenshots/android-auto-favorites.jpg" width="380" alt="Projected Android Auto split-screen Favorites tab with saved tracks beside Maps" /> |
+
+<p>
+  <img src="docs/media/android-auto-browse.gif" width="760" alt="Animated Android Auto browse demo cycling through Latest, Popular, and Favorites beside Maps" />
+</p>
+
+[`MP4 demo`](docs/media/android-auto-browse.mp4)
 
 The heart in the Now Playing transport row is a `CommandButton` pinned to `CommandButton.SLOT_OVERFLOW` so AAOS keeps the standard transport (`skip-prev / play-pause / skip-next`) intact. Tapping it dispatches a custom `SessionCommand` to `MeRepository.toggleFavorite(...)` for the playing track, with optimistic UI and server-confirmed rollback. Favorites / Feed / Playlists roots gate on `AuthRepository.session` and return a non-playable placeholder when there's no Hype Machine login, so the system shows "Media isn't available" instead of a generic error. Artwork fetching is routed through an `OkHttpBitmapLoader` backed by the app's already-trusted `OkHttpClient` so the system notification + Now Playing in real cars don't depend on the head unit's trust store.
 
-> Captured at 1920×1080 on `AAOS_API_35` resized via `adb shell wm size 1920x1080 / wm density 200`, launching `com.android.car.media` with `-a android.car.intent.action.MEDIA_TEMPLATE` against `dev.josu.hypecar/dev.josu.hypecar.auto.service.HypeMediaLibraryService`. The colored placeholder squares on browse rows are an emulator quirk: AAOS_API_35's stripped trust store can't validate the `static.hypem.com` cert chain ("Chain validation failed") and the Media Templates browse path doesn't honor inline `MediaMetadata.artworkData`. Real cars render the actual album art.
+> Screenshots and demo above are projected Android Auto running on a real head unit in split-screen mode with Maps. Emulator QA still uses `AAOS_API_35` and launches `com.android.car.media` with `-a android.car.intent.action.MEDIA_TEMPLATE` against `dev.josu.hypecar/dev.josu.hypecar.auto.service.HypeMediaLibraryService`, but those captures are not used here because the emulator can show host chrome, placeholder art, and clipped template overlays that do not match real projection.
 
 ### AAOS — Compose immersive UI (when launched directly)
 
@@ -85,7 +91,7 @@ Requires JDK 17. The Gradle wrapper handles everything else.
 # Build a debug APK
 ./gradlew :app:assembleDebug
 
-# Build release artifacts (unsigned unless signing env vars are set)
+# Build Play-ready release artifacts (requires signing env vars)
 ./gradlew :app:assembleRelease :app:bundleRelease
 ```
 
@@ -105,7 +111,7 @@ export HYPE_RELEASE_KEY_PASSWORD='...'
 # → app/build/outputs/bundle/release/app-release.aab
 ```
 
-If the signing variables are absent, Gradle still produces an unsigned release artifact for local verification.
+If the signing variables are absent, release packaging fails fast. Use `./gradlew :app:assembleDebug` for local installable builds.
 
 ## Running on Android Auto / AAOS
 
@@ -147,13 +153,13 @@ Declared in `app/src/main/AndroidManifest.xml`:
 
 ## Releases
 
-Pre-built artifacts are versioned under `dist/<version>/` (21 versions: `0.1.0` through `0.21.0`). Per-version changelogs live in [`CHANGELOG.md`](CHANGELOG.md).
+Release artifacts are generated on demand from the current source tree. Per-version changelog notes live in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
-ls dist/0.21.0/
-#  hype-car-0.21.0-debug-installable.apk
-#  hype-car-0.21.0-release-unsigned.apk
-#  hype-car-0.21.0-release-unsigned.aab
+scripts/dev.sh release
+#  dist/<version>/hype-car-<version>-debug-installable.apk
+#  dist/<version>/hype-car-<version>-release.apk
+#  dist/<version>/hype-car-<version>-release.aab
 ```
 
 ## Useful scripts
@@ -167,7 +173,7 @@ ls dist/0.21.0/
 | Doc | Purpose |
 |---|---|
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Dev setup, code style, test patterns, release flow |
-| [`CHANGELOG.md`](CHANGELOG.md) | Per-version notes for every release in `dist/` |
+| [`CHANGELOG.md`](CHANGELOG.md) | Per-version release notes |
 | [`SECURITY.md`](SECURITY.md) | Coordinated-disclosure policy for vulnerability reports |
 | [`RELEASE.md`](RELEASE.md) | Release-checklist (signing, Play Store metadata) |
 | [`LICENSE`](LICENSE) | MIT |

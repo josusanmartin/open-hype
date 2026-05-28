@@ -1,6 +1,5 @@
 package dev.josu.hypecar
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -10,6 +9,7 @@ import androidx.compose.ui.test.performClick
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.model.repository.OfflineDownloadStatus
 import dev.josu.hypecar.core.model.repository.OfflineRepository
+import dev.josu.hypecar.core.ui.HypeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Rule
@@ -33,7 +33,7 @@ class OfflineSettingsRouteScreenTest {
         val viewModel = OfflineSettingsViewModel(repo)
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { OfflineSettingsRoute(viewModel = viewModel) }
             }
         }
@@ -43,8 +43,8 @@ class OfflineSettingsRouteScreenTest {
         composeRule.onNodeWithText("Storage limit").assertIsDisplayed()
         composeRule.onNodeWithText("Sync now").assertIsDisplayed()
         composeRule.onNodeWithText("Clear cached data").assertIsDisplayed()
-        // The slider exposes its current quota via the row header — initial 500 MB.
-        composeRule.onNodeWithText("500 MB").assertIsDisplayed()
+        // The selected quota appears in the row header and the discrete chip set.
+        assertThat(composeRule.onAllNodesWithText("500 MB").fetchSemanticsNodes()).isNotEmpty()
     }
 
     @Test
@@ -53,7 +53,7 @@ class OfflineSettingsRouteScreenTest {
         val viewModel = OfflineSettingsViewModel(repo)
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { OfflineSettingsRoute(viewModel = viewModel) }
             }
         }
@@ -74,7 +74,7 @@ class OfflineSettingsRouteScreenTest {
         val viewModel = OfflineSettingsViewModel(repo)
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface { OfflineSettingsRoute(viewModel = viewModel) }
             }
         }

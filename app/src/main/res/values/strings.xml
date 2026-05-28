@@ -23,6 +23,7 @@
 
     <!-- Generic UI -->
     <string name="action_retry">Retry</string>
+    <string name="app_session_expired">Your session expired. Please sign in again.</string>
 
     <!-- Offline settings -->
     <string name="settings_title">Settings</string>

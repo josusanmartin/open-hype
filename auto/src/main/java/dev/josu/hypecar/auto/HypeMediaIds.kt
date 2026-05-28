@@ -12,6 +12,17 @@ object HypeMediaIds {
     const val playlists = "section:playlists"
     const val history = "section:history"
 
+    /**
+     * Umbrella browsable section introduced as part of the Android Auto
+     * top-level reduction (six tabs → four). Children are [feed], [playlists],
+     * and [history]. The three are individually browsable directly via their
+     * own section ids too, so existing callers continue to work.
+     */
+    const val more = "section:more"
+
+    /** Sub-set of [latest]/[popular]/[history] surfaced under a "Discover" parent. Optional; kept as a no-op alias today. */
+    const val discoverPlaceholder = "section:more"
+
     fun playlist(id: Int): String = "playlist:$id"
 
     fun track(id: String): String = "track:$id"

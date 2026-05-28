@@ -1,6 +1,5 @@
 package dev.josu.hypecar.feature.search
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -21,6 +20,7 @@ import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
+import dev.josu.hypecar.core.ui.HypeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Rule
@@ -39,7 +39,7 @@ class SearchRouteScreenTest {
     @Test
     fun `idle state shows hero subtitle search field and tag chips`() {
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     SearchRoute(
                         onTagClick = {},
@@ -69,7 +69,7 @@ class SearchRouteScreenTest {
     fun `tapping a tag chip forwards the tag name to the navigation callback`() {
         var navTo: String? = null
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     SearchRoute(
                         onTagClick = { navTo = it },
@@ -96,7 +96,7 @@ class SearchRouteScreenTest {
     fun `tapping Go after typing fires the search and renders results`() {
         val search = ScriptedSearch(results = listOf(track("a", "Alpha")))
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     SearchRoute(
                         onTagClick = {},

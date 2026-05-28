@@ -1,4 +1,5 @@
 <resources>
+    <string name="details_back">Back</string>
     <string name="details_blog_default_title">Blog</string>
     <plurals name="details_blog_followers">
         <item quantity="one">%1$d follower</item>
@@ -12,4 +13,18 @@
     <string name="details_user_default_handle">Listener profile</string>
     <string name="details_tag_subtitle">Tag flow</string>
     <string name="details_tag_stat">Tagged cuts</string>
+
+    <!-- Pluralised stat chips on the user profile header. -->
+    <plurals name="user_profile_favorites">
+        <item quantity="one">%1$d favorite</item>
+        <item quantity="other">%1$d favorites</item>
+    </plurals>
+    <plurals name="user_profile_followers">
+        <item quantity="one">%1$d follower</item>
+        <item quantity="other">%1$d followers</item>
+    </plurals>
+    <plurals name="user_profile_following">
+        <item quantity="one">%1$d following</item>
+        <item quantity="other">%1$d following</item>
+    </plurals>
 </resources>

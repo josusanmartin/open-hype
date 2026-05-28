@@ -1,6 +1,5 @@
 package dev.josu.hypecar
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -8,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.ui.HypeTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,7 +32,7 @@ class MiniPlayerBarScreenTest {
         )
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     MiniPlayerBar(
                         uiState = state,
@@ -62,7 +62,7 @@ class MiniPlayerBarScreenTest {
         )
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     MiniPlayerBar(
                         uiState = state,
@@ -87,7 +87,7 @@ class MiniPlayerBarScreenTest {
         var openTapped = false
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     MiniPlayerBar(
                         uiState = MiniPlayerUiState(
@@ -121,7 +121,7 @@ class MiniPlayerBarScreenTest {
     @Test
     fun `automotive metrics still render the same affordances`() {
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     MiniPlayerBar(
                         uiState = MiniPlayerUiState(

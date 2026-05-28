@@ -14,6 +14,7 @@ import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.repository.AuthRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -129,7 +130,7 @@ private class SuccessAuthRepository : AuthRepository {
 private class FailingAuthRepository : AuthRepository {
     override val session: Flow<AuthSession?> = MutableStateFlow(null)
     override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> {
-        val body = okhttp3.ResponseBody.create(null, "")
+        val body = "".toResponseBody(null)
         val response = retrofit2.Response.error<Any>(401, body)
         return Result.failure(retrofit2.HttpException(response))
     }

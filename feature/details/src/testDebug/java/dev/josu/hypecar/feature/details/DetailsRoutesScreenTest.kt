@@ -1,6 +1,5 @@
 package dev.josu.hypecar.feature.details
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -18,6 +17,7 @@ import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
+import dev.josu.hypecar.core.ui.HypeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Rule
@@ -49,7 +49,7 @@ class DetailsRoutesScreenTest {
         )
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     BlogDetailRoute(
                         onBlogClick = {},
@@ -87,7 +87,7 @@ class DetailsRoutesScreenTest {
         )
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     UserDetailRoute(
                         onBlogClick = {},
@@ -116,7 +116,7 @@ class DetailsRoutesScreenTest {
         val playback = DetailsScreenRecordingPlayback { tracks, idx -> played = idx }
 
         composeRule.setContent {
-            MaterialTheme {
+            HypeTheme {
                 Surface {
                     TagDetailRoute(
                         onBlogClick = {},

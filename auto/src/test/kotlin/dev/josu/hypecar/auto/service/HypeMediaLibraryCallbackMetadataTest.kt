@@ -1,7 +1,10 @@
 package dev.josu.hypecar.auto.service
 
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
+import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.auto.HypeMediaIds
 import dev.josu.hypecar.core.model.AuthSession
@@ -30,7 +33,10 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class HypeMediaLibraryCallbackMetadataTest {
+    private val testContext: android.content.Context get() = ApplicationProvider.getApplicationContext()
+
     private val callback = HypeMediaLibraryCallback(
+        context = testContext,
         catalogRepository = EmptyCatalogRepository,
         meRepository = EmptyMeRepository,
         searchRepository = EmptySearchRepository,
@@ -56,8 +62,53 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
+    fun `Auto media button preferences explicitly reserve previous and next transport slots`() {
+        val buttons = callback.privateMediaButtonPreferences()
+
+        val previous = buttons.single { it.playerCommand == Player.COMMAND_SEEK_TO_PREVIOUS }
+        val next = buttons.single { it.playerCommand == Player.COMMAND_SEEK_TO_NEXT }
+
+        assertThat(previous.slots.contains(CommandButton.SLOT_BACK)).isTrue()
+        assertThat(next.slots.contains(CommandButton.SLOT_FORWARD)).isTrue()
+    }
+
+    @Test
+    fun `media button preferences omit Auto-only custom actions from phone notification`() {
+        val buttons = callback.privateMediaButtonPreferences()
+
+        assertThat(buttons.map { it.displayName.toString() }).containsExactly(
+            "Previous",
+            "Next",
+        ).inOrder()
+    }
+
+    @Test
+    fun `Auto custom action layout exposes only favorite so host transport controls stay visible`() {
+        val buttons = callback.privateNowPlayingLayout(loved = false)
+
+        assertThat(buttons.map { it.displayName.toString() }).containsExactly("Favorite")
+        assertThat(buttons.map { it.icon }).containsExactly(CommandButton.ICON_HEART_UNFILLED)
+        buttons.forEach { button ->
+            assertThat(button.displayName.toString()).isNotEmpty()
+            assertThat(button.icon).isNotEqualTo(CommandButton.ICON_UNDEFINED)
+            assertThat(button.iconResId).isEqualTo(CommandButton.getIconResIdForIconConstant(button.icon))
+            assertThat(button.slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
+        }
+    }
+
+    @Test
+    fun `phone notification custom layout exposes only favorite action`() {
+        val buttons = callback.privateNotificationCustomLayout(loved = false)
+
+        assertThat(buttons.map { it.displayName.toString() }).containsExactly("Favorite")
+        assertThat(buttons.single().icon).isEqualTo(CommandButton.ICON_HEART_UNFILLED)
+        assertThat(buttons.single().slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
+    }
+
+    @Test
     fun `loadChildren returns empty list when repository fails`() {
         val failingCallback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = FailingCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -74,6 +125,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadItem resolves playable tracks for Auto item lookup`() {
         val trackCallback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = TrackCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -93,6 +145,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `resolveMediaItems expands id only Auto playback requests`() {
         val trackCallback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = TrackCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -114,6 +167,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `Auto playback expands a selected latest track into a section queue`() {
         val trackCallback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = LatestCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -142,6 +196,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     fun `Auto playback refetches the original source page when track media id encodes pg`() {
         val pagedRepo = PagedLatestCatalogRepository()
         val trackCallback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = pagedRepo,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -173,6 +228,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `Auto search playback expands a selected search result into the result queue`() {
         val trackCallback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = SearchTracksRepository,
@@ -201,6 +257,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     fun `resolveMediaItemsWithStartPosition falls back to single-item when source page lookup fails`() {
         // Repository fails on every fetch; manager should fall back to the resolved single item.
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = TrackCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -228,6 +285,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `resolveMediaItems leaves items with localConfiguration alone`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -251,6 +309,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `resolveMediaItemsWithStartPosition coerces invalid startIndex inside the resolved range`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -277,6 +336,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadItem on a section id returns a browsable section item`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -295,6 +355,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadItem on a playlist id returns a browsable playlist item with the resolved name`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = PlaylistsMeRepository(playlists = listOf(Playlist(id = 5, name = "Late nights"))),
             searchRepository = EmptySearchRepository,
@@ -314,6 +375,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadItem on a playlist id with no matching name falls back to default title`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -331,6 +393,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadChildren on a search-prefixed parentId returns search results`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = SearchTracksRepository,
@@ -352,6 +415,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadChildren on a playlist-prefixed parentId returns the playlist tracks`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = PlaylistTracksMeRepository(tracks = listOf(sampleTrack, secondTrack)),
             searchRepository = EmptySearchRepository,
@@ -372,6 +436,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadChildren on a section_playlists parentId returns browsable playlist items`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = PlaylistsMeRepository(
                 playlists = listOf(Playlist(id = 1, name = "Mixes"), Playlist(id = 2, name = "Sets")),
@@ -396,6 +461,7 @@ class HypeMediaLibraryCallbackMetadataTest {
     @Test
     fun `loadChildren under an unknown parentId yields an empty list`() {
         val callback = HypeMediaLibraryCallback(
+            context = testContext,
             catalogRepository = EmptyCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
@@ -432,6 +498,35 @@ private fun HypeMediaLibraryCallback.privatePlayableItem(track: Track): MediaIte
     )
     method.isAccessible = true
     return method.invoke(this, track, null, 0) as MediaItem
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun HypeMediaLibraryCallback.privateMediaButtonPreferences(): List<CommandButton> {
+    val method = javaClass.getDeclaredMethod(
+        "buildMediaButtonPreferences",
+    )
+    method.isAccessible = true
+    return method.invoke(this) as List<CommandButton>
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun HypeMediaLibraryCallback.privateNowPlayingLayout(loved: Boolean): List<CommandButton> {
+    val method = javaClass.getDeclaredMethod(
+        "buildNowPlayingLayout",
+        Boolean::class.javaPrimitiveType,
+    )
+    method.isAccessible = true
+    return method.invoke(this, loved) as List<CommandButton>
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun HypeMediaLibraryCallback.privateNotificationCustomLayout(loved: Boolean): List<CommandButton> {
+    val method = javaClass.getDeclaredMethod(
+        "buildNotificationCustomLayout",
+        Boolean::class.javaPrimitiveType,
+    )
+    method.isAccessible = true
+    return method.invoke(this, loved) as List<CommandButton>
 }
 
 @Suppress("UNCHECKED_CAST")

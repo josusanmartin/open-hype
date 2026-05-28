@@ -1,5 +1,9 @@
 <resources>
     <string name="catalog_action_retry">Reintentar</string>
+    <string name="catalog_action_play">Reproducir</string>
+    <string name="catalog_action_filter">Filtrar</string>
+    <string name="catalog_action_favorite">Marcar pista como favorita</string>
+    <string name="catalog_action_unfavorite">Quitar de favoritos</string>
     <string name="catalog_empty_default">Aún no hay nada aquí.</string>
     <string name="catalog_latest_title">Reciente</string>
     <string name="catalog_latest_subtitle">Descubre nuevos sonidos e historias</string>
@@ -8,4 +12,9 @@
     <string name="catalog_unknown_artist">Artista desconocido</string>
     <string name="catalog_unknown_title">Pista desconocida</string>
     <string name="catalog_unknown_blog">Blog desconocido</string>
+
+    <plurals name="track_row_stats">
+        <item quantity="one">%1$d le encanta · reposteado %2$dx</item>
+        <item quantity="other">%1$d le encantan · reposteado %2$dx</item>
+    </plurals>
 </resources>

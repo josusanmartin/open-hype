@@ -22,6 +22,7 @@ include(
     ":core:network",
     ":core:data",
     ":core:playback",
+    ":core:ui",
     ":feature:auth",
     ":feature:catalog",
     ":feature:library",
