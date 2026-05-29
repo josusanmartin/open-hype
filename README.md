@@ -26,19 +26,19 @@ What you actually see in a car: the head unit's media app renders our `MediaLibr
 #### Latest
 
 <p>
-  <img src="docs/screenshots/android-auto-latest.jpg" width="900" alt="Projected Android Auto split-screen Latest tab with Hype tracks beside Maps" />
+  <img src="docs/screenshots/android-auto-latest-with-art.jpg" width="900" alt="Projected Android Auto split-screen Latest tab with album artwork beside Maps" />
 </p>
 
 #### Popular
 
 <p>
-  <img src="docs/screenshots/android-auto-popular.jpg" width="900" alt="Projected Android Auto split-screen Popular tab with compact track rows beside Maps" />
+  <img src="docs/screenshots/android-auto-popular-with-art.jpg" width="900" alt="Projected Android Auto split-screen Popular tab with compact album artwork rows beside Maps" />
 </p>
 
 #### Favorites
 
 <p>
-  <img src="docs/screenshots/android-auto-favorites.jpg" width="900" alt="Projected Android Auto split-screen Favorites tab with saved tracks beside Maps" />
+  <img src="docs/screenshots/android-auto-favorites-with-art.jpg" width="900" alt="Projected Android Auto split-screen Favorites tab with saved-track album artwork beside Maps" />
 </p>
 
 <p>
