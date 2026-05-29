@@ -125,7 +125,7 @@ export HYPE_RELEASE_KEY_PASSWORD='...'
 # → app/build/outputs/bundle/release/app-release.aab
 ```
 
-If the signing variables are absent, release packaging fails fast. Use `./gradlew :app:assembleDebug` for local installable builds.
+If the signing variables are absent locally, release packaging fails fast. On GitHub Actions, signed artifact packaging is skipped unless the release signing secrets are configured; tests and lint still run. Use `./gradlew :app:assembleDebug` for local installable builds.
 
 ## Running on Android Auto / AAOS
 

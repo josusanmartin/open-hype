@@ -126,7 +126,42 @@ jobs:
       - name: Permission for gradlew
         run: chmod +x gradlew
 
+      - name: Check release signing secrets
+        id: signing
+        env:
+          HYPE_RELEASE_KEYSTORE_BASE64: ${{ secrets.HYPE_RELEASE_KEYSTORE_BASE64 }}
+          HYPE_RELEASE_STORE_FILE_SECRET: ${{ secrets.HYPE_RELEASE_STORE_FILE }}
+          HYPE_RELEASE_STORE_PASSWORD: ${{ secrets.HYPE_RELEASE_STORE_PASSWORD }}
+          HYPE_RELEASE_KEY_ALIAS: ${{ secrets.HYPE_RELEASE_KEY_ALIAS }}
+          HYPE_RELEASE_KEY_PASSWORD: ${{ secrets.HYPE_RELEASE_KEY_PASSWORD }}
+        run: |
+          has_store=false
+          if [ -n "$HYPE_RELEASE_KEYSTORE_BASE64" ] || [ -n "$HYPE_RELEASE_STORE_FILE_SECRET" ]; then
+            has_store=true
+          fi
+
+          if [ "$has_store" = true ] &&
+             [ -n "$HYPE_RELEASE_STORE_PASSWORD" ] &&
+             [ -n "$HYPE_RELEASE_KEY_ALIAS" ] &&
+             [ -n "$HYPE_RELEASE_KEY_PASSWORD" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "### Release artifacts skipped"
+              echo
+              echo "Signed APK/AAB packaging requires these repository secrets:"
+              echo
+              echo "- \`HYPE_RELEASE_KEYSTORE_BASE64\` or \`HYPE_RELEASE_STORE_FILE\`"
+              echo "- \`HYPE_RELEASE_STORE_PASSWORD\`"
+              echo "- \`HYPE_RELEASE_KEY_ALIAS\`"
+              echo "- \`HYPE_RELEASE_KEY_PASSWORD\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Skipping release artifacts because release signing secrets are not fully configured."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Restore release keystore
+        if: steps.signing.outputs.available == 'true'
         env:
           HYPE_RELEASE_KEYSTORE_BASE64: ${{ secrets.HYPE_RELEASE_KEYSTORE_BASE64 }}
           HYPE_RELEASE_STORE_FILE_SECRET: ${{ secrets.HYPE_RELEASE_STORE_FILE }}
@@ -140,6 +175,7 @@ jobs:
           fi
 
       - name: Assemble signed release APK + AAB
+        if: steps.signing.outputs.available == 'true'
         env:
           HYPE_RELEASE_STORE_PASSWORD: ${{ secrets.HYPE_RELEASE_STORE_PASSWORD }}
           HYPE_RELEASE_KEY_ALIAS: ${{ secrets.HYPE_RELEASE_KEY_ALIAS }}
@@ -147,6 +183,7 @@ jobs:
         run: ./gradlew --no-daemon :app:assembleRelease :app:bundleRelease
 
       - name: Upload release artifacts
+        if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-artifacts

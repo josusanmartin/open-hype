@@ -13,7 +13,7 @@ export HYPE_RELEASE_KEY_ALIAS='...'
 export HYPE_RELEASE_KEY_PASSWORD='...'
 ```
 
-For GitHub Actions, prefer storing the keystore file as a base64 secret named `HYPE_RELEASE_KEYSTORE_BASE64`; the workflow restores it to a temporary file and exports `HYPE_RELEASE_STORE_FILE` automatically. The password and alias secrets use the same names as the environment variables above.
+For GitHub Actions, prefer storing the keystore file as a base64 secret named `HYPE_RELEASE_KEYSTORE_BASE64`; the workflow restores it to a temporary file and exports `HYPE_RELEASE_STORE_FILE` automatically. The password and alias secrets use the same names as the environment variables above. If those secrets are not configured, CI still runs tests/lint and skips signed artifact packaging with a notice.
 
 Then build the Play Store bundle:
 
@@ -27,7 +27,7 @@ The signed bundle is written to:
 app/build/outputs/bundle/release/app-release.aab
 ```
 
-If the signing variables are not set, Gradle fails release packaging before producing APK/AAB outputs. Use debug builds for local verification.
+If the signing variables are not set locally, Gradle fails release packaging before producing APK/AAB outputs. Use debug builds for local verification.
 
 ## Store Review
 
