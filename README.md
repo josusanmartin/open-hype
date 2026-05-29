@@ -23,9 +23,23 @@ Unofficial open-source Hype Machine client for Android phones and Android Auto /
 
 What you actually see in a car: the head unit's media app renders our `MediaLibraryService` through the Android Auto / Automotive Media Templates — the same system surface Spotify, YouTube Music, etc. use. Browse roots come from our `MediaLibrarySession.Callback`; the playback chrome is system-rendered.
 
-| Latest | Popular | Favorites |
-| --- | --- | --- |
-| <img src="docs/screenshots/android-auto-latest.jpg" width="380" alt="Projected Android Auto split-screen Latest tab with Hype tracks beside Maps" /> | <img src="docs/screenshots/android-auto-popular.jpg" width="380" alt="Projected Android Auto split-screen Popular tab with compact track rows beside Maps" /> | <img src="docs/screenshots/android-auto-favorites.jpg" width="380" alt="Projected Android Auto split-screen Favorites tab with saved tracks beside Maps" /> |
+#### Latest
+
+<p>
+  <img src="docs/screenshots/android-auto-latest.jpg" width="900" alt="Projected Android Auto split-screen Latest tab with Hype tracks beside Maps" />
+</p>
+
+#### Popular
+
+<p>
+  <img src="docs/screenshots/android-auto-popular.jpg" width="900" alt="Projected Android Auto split-screen Popular tab with compact track rows beside Maps" />
+</p>
+
+#### Favorites
+
+<p>
+  <img src="docs/screenshots/android-auto-favorites.jpg" width="900" alt="Projected Android Auto split-screen Favorites tab with saved tracks beside Maps" />
+</p>
 
 <p>
   <img src="docs/media/android-auto-browse.gif" width="760" alt="Animated Android Auto browse demo cycling through Latest, Popular, and Favorites beside Maps" />
