@@ -145,7 +145,11 @@ class HypeMediaLibraryCallback @Inject constructor(
 
     private fun buildNowPlayingLayout(loved: Boolean): List<CommandButton> = listOf(
         favoriteButtonBuilder(loved)
-            .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW)
+            .setSlots(
+                CommandButton.SLOT_BACK_SECONDARY,
+                CommandButton.SLOT_FORWARD_SECONDARY,
+                CommandButton.SLOT_OVERFLOW,
+            )
             .build(),
     )
 
@@ -160,29 +164,44 @@ class HypeMediaLibraryCallback @Inject constructor(
         nextButton(),
     )
 
+    private fun buildCarMediaButtonPreferences(loved: Boolean): List<CommandButton> = listOf(
+        previousButton(),
+        favoriteButtonBuilder(loved)
+            .setSlots(
+                CommandButton.SLOT_BACK_SECONDARY,
+                CommandButton.SLOT_FORWARD_SECONDARY,
+                CommandButton.SLOT_OVERFLOW,
+            )
+            .build(),
+        nextButton(),
+    )
+
     private fun MediaLibrarySession.updateNowPlayingButtons(
         controller: MediaSession.ControllerInfo?,
         loved: Boolean,
     ) {
-        val mediaButtons = buildMediaButtonPreferences()
         if (controller != null) {
             val customLayout = if (controller == mediaNotificationControllerInfo) {
                 buildNotificationCustomLayout(loved)
             } else {
                 buildNowPlayingLayout(loved)
             }
+            val mediaButtons = if (controller == mediaNotificationControllerInfo) {
+                buildMediaButtonPreferences()
+            } else {
+                buildCarMediaButtonPreferences(loved)
+            }
             setCustomLayout(controller, customLayout)
             setMediaButtonPreferences(controller, mediaButtons)
         } else {
             setCustomLayout(buildNowPlayingLayout(loved))
-            setMediaButtonPreferences(mediaButtons)
+            setMediaButtonPreferences(buildCarMediaButtonPreferences(loved))
         }
     }
 
     private fun MediaLibrarySession.updateAllNowPlayingButtons(loved: Boolean) {
-        val mediaButtons = buildMediaButtonPreferences()
         setCustomLayout(buildNowPlayingLayout(loved))
-        setMediaButtonPreferences(mediaButtons)
+        setMediaButtonPreferences(buildCarMediaButtonPreferences(loved))
         connectedControllers.forEach { controller ->
             updateNowPlayingButtons(controller, loved)
         }
@@ -212,7 +231,15 @@ class HypeMediaLibraryCallback @Inject constructor(
                     },
                 ),
             )
-            .setMediaButtonPreferences(ImmutableList.copyOf(buildMediaButtonPreferences()))
+            .setMediaButtonPreferences(
+                ImmutableList.copyOf(
+                    if (session is MediaLibrarySession && controller == session.mediaNotificationControllerInfo) {
+                        buildMediaButtonPreferences()
+                    } else {
+                        buildCarMediaButtonPreferences(likedNowPlaying.get())
+                    },
+                ),
+            )
             .build()
     }
 

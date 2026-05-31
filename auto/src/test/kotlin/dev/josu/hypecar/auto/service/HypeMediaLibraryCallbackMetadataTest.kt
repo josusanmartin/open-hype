@@ -83,6 +83,22 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
+    fun `car media button preferences expose favorite without replacing skip next`() {
+        val buttons = callback.privateCarMediaButtonPreferences(loved = false)
+
+        assertThat(buttons.map { it.displayName.toString() }).containsExactly(
+            "Previous",
+            "Favorite",
+            "Next",
+        ).inOrder()
+        assertThat(buttons[0].slots.contains(CommandButton.SLOT_BACK)).isTrue()
+        assertThat(buttons[1].slots.contains(CommandButton.SLOT_BACK_SECONDARY)).isTrue()
+        assertThat(buttons[1].slots.contains(CommandButton.SLOT_FORWARD_SECONDARY)).isTrue()
+        assertThat(buttons[1].slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
+        assertThat(buttons[2].slots.contains(CommandButton.SLOT_FORWARD)).isTrue()
+    }
+
+    @Test
     fun `Auto custom action layout exposes only favorite so host transport controls stay visible`() {
         val buttons = callback.privateNowPlayingLayout(loved = false)
 
@@ -93,6 +109,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             assertThat(button.icon).isNotEqualTo(CommandButton.ICON_UNDEFINED)
             assertThat(button.iconResId).isEqualTo(CommandButton.getIconResIdForIconConstant(button.icon))
             assertThat(button.slots.contains(CommandButton.SLOT_BACK_SECONDARY)).isTrue()
+            assertThat(button.slots.contains(CommandButton.SLOT_FORWARD_SECONDARY)).isTrue()
             assertThat(button.slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
         }
     }
@@ -508,6 +525,16 @@ private fun HypeMediaLibraryCallback.privateMediaButtonPreferences(): List<Comma
     )
     method.isAccessible = true
     return method.invoke(this) as List<CommandButton>
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun HypeMediaLibraryCallback.privateCarMediaButtonPreferences(loved: Boolean): List<CommandButton> {
+    val method = javaClass.getDeclaredMethod(
+        "buildCarMediaButtonPreferences",
+        Boolean::class.javaPrimitiveType,
+    )
+    method.isAccessible = true
+    return method.invoke(this, loved) as List<CommandButton>
 }
 
 @Suppress("UNCHECKED_CAST")
