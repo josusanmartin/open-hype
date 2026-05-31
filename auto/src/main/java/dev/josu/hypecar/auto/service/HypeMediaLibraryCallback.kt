@@ -1,6 +1,8 @@
 package dev.josu.hypecar.auto.service
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
@@ -39,7 +41,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 /**
  * Drives the Android Auto / AAOS browse tree and Now Playing custom-layout.
@@ -70,8 +74,14 @@ import javax.inject.Inject
  *
  *  - **Custom Now Playing actions.** Favorite/Unfavorite is the only custom
  *    action exposed to the car host. Previous/play-next remain standard player
- *    commands so Palisade-style hosts do not drop skip-next from the transport
- *    row.
+ *    commands; favorite asks for a secondary slot with overflow as a fallback
+ *    so Palisade-style hosts keep skip-next visible while still surfacing the
+ *    heart.
+ *
+ *  - **Local section artwork.** Root section icons are embedded as PNG bytes
+ *    rather than `android.resource://` vector URIs. Some projected Android Auto
+ *    hosts tint local vector artwork as monochrome action icons, which turns
+ *    colorful section logos into white squares.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 class HypeMediaLibraryCallback @Inject constructor(
@@ -99,6 +109,7 @@ class HypeMediaLibraryCallback @Inject constructor(
     }
 
     private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val drawableArtworkCache = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
 
     /** Tracks the favorite state for the currently-playing track so the icon flips after a tap. */
     private val likedNowPlaying = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -107,7 +118,7 @@ class HypeMediaLibraryCallback @Inject constructor(
             val loved = mediaItem?.mediaMetadata?.extras?.getBoolean(ExtraIsLoved, false) ?: false
             likedNowPlaying.set(loved)
             currentSession?.let { session ->
-                session.updateNowPlayingButtons(session.mediaNotificationControllerInfo, loved)
+                session.updateAllNowPlayingButtons(loved)
             }
         }
     }
@@ -127,23 +138,21 @@ class HypeMediaLibraryCallback @Inject constructor(
             .setSlots(CommandButton.SLOT_FORWARD)
             .build()
 
-    private fun favoriteButton(filled: Boolean): CommandButton =
+    private fun favoriteButtonBuilder(filled: Boolean): CommandButton.Builder =
         CommandButton.Builder(if (filled) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
             .setDisplayName(context.getString(if (filled) R.string.auto_action_unfavorite else R.string.auto_action_favorite))
             .setSessionCommand(SessionCommand(ActionToggleFavorite, Bundle.EMPTY))
-            // Without an explicit slot, AAOS placed the heart in SLOT_FORWARD and
-            // pushed skip-next off the Now Playing transport row. SLOT_OVERFLOW
-            // routes it to the secondary action area so the standard transport
-            // (prev / play-pause / next) stays intact.
-            .setSlots(CommandButton.SLOT_OVERFLOW)
-            .build()
 
     private fun buildNowPlayingLayout(loved: Boolean): List<CommandButton> = listOf(
-        favoriteButton(loved),
+        favoriteButtonBuilder(loved)
+            .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW)
+            .build(),
     )
 
     private fun buildNotificationCustomLayout(loved: Boolean): List<CommandButton> = listOf(
-        favoriteButton(loved),
+        favoriteButtonBuilder(loved)
+            .setSlots(CommandButton.SLOT_OVERFLOW)
+            .build(),
     )
 
     private fun buildMediaButtonPreferences(): List<CommandButton> = listOf(
@@ -167,6 +176,15 @@ class HypeMediaLibraryCallback @Inject constructor(
         } else {
             setCustomLayout(buildNowPlayingLayout(loved))
             setMediaButtonPreferences(mediaButtons)
+        }
+    }
+
+    private fun MediaLibrarySession.updateAllNowPlayingButtons(loved: Boolean) {
+        val mediaButtons = buildMediaButtonPreferences()
+        setCustomLayout(buildNowPlayingLayout(loved))
+        setMediaButtonPreferences(mediaButtons)
+        connectedControllers.forEach { controller ->
+            updateNowPlayingButtons(controller, loved)
         }
     }
 
@@ -584,7 +602,7 @@ class HypeMediaLibraryCallback @Inject constructor(
                 MediaMetadata.Builder()
                     .setTitle(context.getString(R.string.auto_signin_title))
                     .setSubtitle(context.getString(R.string.auto_signin_subtitle))
-                    .setArtworkUri(drawableResUri(R.drawable.ic_auto_signin))
+                    .setLocalArtwork(R.drawable.ic_auto_signin)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_NEWS)
                     // AAOS filters inert items (neither browsable nor playable)
                     // out of lists, which turns placeholders into the generic
@@ -604,7 +622,7 @@ class HypeMediaLibraryCallback @Inject constructor(
                 MediaMetadata.Builder()
                     .setTitle(context.getString(R.string.auto_private_unavailable_title))
                     .setSubtitle(context.getString(R.string.auto_private_unavailable_subtitle))
-                    .setArtworkUri(drawableResUri(R.drawable.ic_auto_signin))
+                    .setLocalArtwork(R.drawable.ic_auto_signin)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_NEWS)
                     .setIsBrowsable(true)
                     .setIsPlayable(false)
@@ -710,7 +728,7 @@ class HypeMediaLibraryCallback @Inject constructor(
         mediaId = mediaId,
         title = context.getString(titleResId),
         subtitle = subtitleResId?.let(context::getString),
-        artworkUri = artworkResId?.let(::drawableResUri),
+        artworkResId = artworkResId,
         applySelfCategoryHint = true,
     )
 
@@ -777,7 +795,7 @@ class HypeMediaLibraryCallback @Inject constructor(
         mediaId = mediaId,
         title = title,
         subtitle = null,
-        artworkUri = null,
+        artworkResId = null,
         applySelfCategoryHint = false,
     )
 
@@ -785,7 +803,7 @@ class HypeMediaLibraryCallback @Inject constructor(
         mediaId: String,
         title: String,
         subtitle: String?,
-        artworkUri: Uri?,
+        artworkResId: Int?,
         applySelfCategoryHint: Boolean,
     ): MediaItem {
         val mediaType = when (mediaId) {
@@ -802,7 +820,7 @@ class HypeMediaLibraryCallback @Inject constructor(
             .setIsBrowsable(true)
             .setIsPlayable(false)
         if (subtitle != null) builder.setSubtitle(subtitle)
-        if (artworkUri != null) builder.setArtworkUri(artworkUri)
+        builder.setLocalArtwork(artworkResId)
         if (applySelfCategoryHint) builder.setExtras(AutoBrowseHints.selfHintCategory())
         return MediaItem.Builder()
             .setMediaId(mediaId)
@@ -817,6 +835,40 @@ class HypeMediaLibraryCallback @Inject constructor(
             .authority(context.packageName)
             .appendPath(resId.toString())
             .build()
+
+    private fun MediaMetadata.Builder.setLocalArtwork(resId: Int?): MediaMetadata.Builder {
+        if (resId == null) return this
+        val data = drawableArtworkData(resId)
+        if (data != null) {
+            setArtworkData(data, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        } else {
+            setArtworkUri(drawableResUri(resId))
+        }
+        return this
+    }
+
+    private fun drawableArtworkData(resId: Int): ByteArray? =
+        drawableArtworkCache[resId] ?: renderDrawableArtwork(resId)?.also { bytes ->
+            drawableArtworkCache[resId] = bytes
+        }
+
+    private fun renderDrawableArtwork(resId: Int): ByteArray? {
+        val drawable = context.getDrawable(resId) ?: return null
+        val sizePx = (96f * context.resources.displayMetrics.density)
+            .roundToInt()
+            .coerceAtLeast(96)
+        val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        return ByteArrayOutputStream().use { output ->
+            if (bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                output.toByteArray()
+            } else {
+                null
+            }
+        }
+    }
 
     fun close() {
         currentSession?.player?.removeListener(playerListener)

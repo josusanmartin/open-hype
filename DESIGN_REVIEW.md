@@ -37,7 +37,7 @@ These are explicit strengths I want to make sure don't get refactored away.
 - **`OkHttpBitmapLoader` + `CacheBitmapLoader`** work around the AAOS_API_35 trust-store bug — exactly the kind of issue most apps don't notice until users do.
 - **`withInlineArtwork`** (`HypeMediaLibraryCallback.kt:264-274`) pre-embeds bytes for the about-to-play item so Now Playing renders even on a stripped trust store.
 - **Source-page-aware queue resolution** (`HypeMediaLibraryCallback.kt:221-256`) — tap a track on page 3, re-fetch page 3, and play the queue as the user sees it. This is unusually thoughtful and worth keeping.
-- **Favorite custom action moved to `SLOT_OVERFLOW`** so it doesn't push skip-next off the car transport bar (`HypeMediaLibraryCallback.kt:53-79`).
+- **Favorite custom action requests a secondary action slot with overflow fallback** so it doesn't push skip-next off the car transport bar while still surfacing the heart on supported head units (`HypeMediaLibraryCallback.kt:53-79`).
 - **`setHandleAudioBecomingNoisy(true)` + audio attributes** set correctly for Bluetooth/AVRCP (`HypePlaybackManager.kt:97-101`).
 
 ---
@@ -143,8 +143,8 @@ Grep across the repo for `CONTENT_STYLE`, `BROWSABLE_HINT`, `PLAYABLE_HINT`, `GR
 **A4. `onSearch` is a no-op.**
 `HypeMediaLibraryCallback.kt:167-172` returns `LibraryResult.ofVoid()` unconditionally. `onGetSearchResult` (lines 174-189) does work, so Assistant utterances ("Hey Google, play X on Hype Machine") technically resolve, but they hit the network cold every time. Implement `onSearch` to warm the cache and call `notifyChildrenChanged(controller, "search:$query", count, null)` so the result list is ready when `onGetSearchResult` is called.
 
-**A5. The six section tiles have no artwork.**
-`HypeMediaLibraryCallback.kt:476-495` sets `MEDIA_TYPE_FOLDER_*` correctly but doesn't call `setArtworkUri` on the section items. On grid HUDs, the user sees six identical placeholder rectangles. Pick six representative drawables (`@drawable/auto_section_latest`, etc.) bundled in the APK and assign them.
+**A5. Section tiles now embed bitmap artwork, but need real-car regression coverage.**
+`HypeMediaLibraryCallback.kt` renders bundled section drawables to PNG artwork bytes before handing them to the media template. This avoids projected Android Auto hosts tinting vector resource URIs into white square tiles. Keep this covered with real-head-unit screenshots because emulator rendering still differs from Hyundai/Kia projection.
 
 **A6. All Auto-facing strings are hardcoded.**
 "Latest", "Popular", "Favorites", "Feed", "Playlists", "History", "Sign in on the phone first" subtitle, "Favorite"/"Unfavorite" command labels, fallback "Playlist $id" — all inlined as Kotlin string literals. The phone has `values-es/strings.xml` but Auto strings never reach it. A user with Spanish system locale gets a Spanish phone app and an English car HUD.

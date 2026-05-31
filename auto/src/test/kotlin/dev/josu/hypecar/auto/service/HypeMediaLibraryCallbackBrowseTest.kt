@@ -38,7 +38,7 @@ import org.robolectric.RobolectricTestRunner
  *  - More umbrella surfaces Feed / Playlists / History one level deeper
  *  - Signed-out browse of an authenticated section returns a placeholder, not
  *    a generic error
- *  - Section tiles carry localised titles, subtitles, and an artwork URI
+ *  - Section tiles carry localised titles, subtitles, and inline artwork
  *  - Track items carry artist-first subtitles plus blog/loved extras
  *  - Empty sections render a friendly placeholder on the first page
  */
@@ -77,7 +77,7 @@ class HypeMediaLibraryCallbackBrowseTest {
     }
 
     @Test
-    fun `each top-level section carries a localised title subtitle and artwork uri`() {
+    fun `each top-level section carries a localised title subtitle and inline artwork`() {
         val callback = buildCallback()
 
         val items = callback.privateBrowseLoadChildren(HypeMediaIds.root, pageSize = 20)
@@ -89,9 +89,14 @@ class HypeMediaLibraryCallbackBrowseTest {
             .isEqualTo(testContext.getString(R.string.auto_section_latest_title))
         assertThat(latest.mediaMetadata.subtitle.toString())
             .isEqualTo(testContext.getString(R.string.auto_section_latest_subtitle))
-        assertThat(latest.mediaMetadata.artworkUri).isNotNull()
-        // Every tile has its own artwork URI — no bare section rectangles.
-        items.forEach { assertThat(it.mediaMetadata.artworkUri).isNotNull() }
+        assertThat(latest.mediaMetadata.artworkData).isNotEmpty()
+        assertThat(latest.mediaMetadata.artworkUri).isNull()
+        // Every tile has inline bitmap artwork — no android.resource vector
+        // URI that real head units can tint into a white square.
+        items.forEach { item ->
+            assertThat(item.mediaMetadata.artworkData).isNotEmpty()
+            assertThat(item.mediaMetadata.artworkUri).isNull()
+        }
     }
 
     @Test
@@ -148,7 +153,8 @@ class HypeMediaLibraryCallbackBrowseTest {
         assertThat(placeholder.mediaMetadata.subtitle.toString())
             .isEqualTo(testContext.getString(R.string.auto_signin_subtitle))
         // The sign-in artwork must be present so the tile is recognisable on the HUD.
-        assertThat(placeholder.mediaMetadata.artworkUri).isNotNull()
+        assertThat(placeholder.mediaMetadata.artworkData).isNotEmpty()
+        assertThat(placeholder.mediaMetadata.artworkUri).isNull()
     }
 
     @Test

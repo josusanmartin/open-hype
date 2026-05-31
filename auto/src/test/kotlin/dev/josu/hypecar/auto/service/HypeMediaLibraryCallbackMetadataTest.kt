@@ -92,6 +92,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             assertThat(button.displayName.toString()).isNotEmpty()
             assertThat(button.icon).isNotEqualTo(CommandButton.ICON_UNDEFINED)
             assertThat(button.iconResId).isEqualTo(CommandButton.getIconResIdForIconConstant(button.icon))
+            assertThat(button.slots.contains(CommandButton.SLOT_BACK_SECONDARY)).isTrue()
             assertThat(button.slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
         }
     }
