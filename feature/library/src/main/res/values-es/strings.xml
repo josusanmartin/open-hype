@@ -24,5 +24,7 @@
     <string name="library_profile_subtitle_playlists">\@%1$s · pilas de listas</string>
     <string name="library_profile_subtitle_history">\@%1$s · recorrido reciente</string>
 
-    <string name="library_session_expired">Tu sesión expiró. Vuelve a iniciar sesión.</string>
+    <string name="library_logout_confirm_title">¿Cerrar sesión?</string>
+    <string name="library_logout_confirm_message">Se cerrará tu sesión y se borrarán la biblioteca en caché, el historial y las descargas de este dispositivo.</string>
+    <string name="library_logout_cancel">Cancelar</string>
 </resources>

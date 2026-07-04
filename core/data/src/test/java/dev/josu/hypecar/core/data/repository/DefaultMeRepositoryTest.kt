@@ -12,7 +12,6 @@ import dev.josu.hypecar.core.data.local.entity.TrackListEntity
 import dev.josu.hypecar.core.network.HypeApiService
 import dev.josu.hypecar.core.network.dto.BlogDto
 import dev.josu.hypecar.core.network.dto.GetTokenResponseDto
-import dev.josu.hypecar.core.network.dto.TagDto
 import dev.josu.hypecar.core.network.dto.TrackDto
 import dev.josu.hypecar.core.network.dto.UserDto
 import kotlinx.coroutines.runBlocking
@@ -41,6 +40,40 @@ class DefaultMeRepositoryTest {
 
             assertThat(result).isTrue()
             assertThat(api.favoriteRequests).containsExactly("39v49" to "item")
+        }
+    }
+
+    @Test
+    fun `toggleFavorite drops cached favorites lists so membership refetches`() {
+        runBlocking {
+            val trackListDao = FakeTrackListDao()
+            trackListDao.upsert(
+                TrackListEntity(
+                    key = "favorites:1:30",
+                    trackIdsJson = "[\"other\"]",
+                    updatedAtEpochSeconds = System.currentTimeMillis() / 1000,
+                ),
+            )
+            trackListDao.upsert(
+                TrackListEntity(
+                    key = "feed:all:1:30",
+                    trackIdsJson = "[\"other\"]",
+                    updatedAtEpochSeconds = System.currentTimeMillis() / 1000,
+                ),
+            )
+            val repository = DefaultMeRepository(
+                api = RecordingFavoriteApi(response = "1"),
+                trackDao = EmptyTrackDao,
+                trackListDao = trackListDao,
+                playlistDao = EmptyPlaylistDao,
+                historyDao = EmptyHistoryDao,
+                json = Json,
+            )
+
+            repository.toggleFavorite("39v49")
+
+            assertThat(trackListDao.get("favorites:1:30")).isNull()
+            assertThat(trackListDao.get("feed:all:1:30")).isNotNull()
         }
     }
 
@@ -268,6 +301,7 @@ private fun sampleTrackDto(
 private object EmptyTrackListDao : TrackListDao {
     override suspend fun upsert(item: TrackListEntity) = Unit
     override suspend fun get(key: String): TrackListEntity? = null
+    override suspend fun deleteByKeyPrefix(prefix: String) = Unit
 }
 
 private object EmptyPlaylistDao : PlaylistDao {
@@ -298,6 +332,4 @@ private abstract class EmptyHypeApiService : HypeApiService {
     override suspend fun user(username: String): UserDto = error("Not used")
     override suspend fun userFavorites(username: String, params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun userFriends(username: String, params: Map<String, String>): List<UserDto> = emptyList()
-    override suspend fun tags(): List<TagDto> = emptyList()
-    override suspend fun tagTracks(tagName: String, params: Map<String, String>): List<TrackDto> = emptyList()
 }

@@ -1,5 +1,7 @@
 package dev.josu.hypecar.auto.service
 
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import androidx.media.utils.MediaConstants
 import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaLibraryService
@@ -15,7 +17,6 @@ import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.SearchQuery
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.AuthRepository
@@ -58,6 +59,7 @@ class HypeMediaLibraryCallbackBrowseTest {
         searchRepository = searchRepository,
         offlineRepository = BrowseEmptyOfflineRepository,
         authRepository = authRepository,
+        favoriteSyncManager = browseTestFavoriteSyncManager(),
         okHttpClient = BrowseTestOkHttpClient,
     )
 
@@ -96,6 +98,7 @@ class HypeMediaLibraryCallbackBrowseTest {
         items.forEach { item ->
             assertThat(item.mediaMetadata.artworkData).isNotEmpty()
             assertThat(item.mediaMetadata.artworkUri).isNull()
+            assertTransparentArtworkCorners(item)
         }
     }
 
@@ -155,6 +158,7 @@ class HypeMediaLibraryCallbackBrowseTest {
         // The sign-in artwork must be present so the tile is recognisable on the HUD.
         assertThat(placeholder.mediaMetadata.artworkData).isNotEmpty()
         assertThat(placeholder.mediaMetadata.artworkUri).isNull()
+        assertTransparentArtworkCorners(placeholder)
     }
 
     @Test
@@ -234,7 +238,7 @@ class HypeMediaLibraryCallbackBrowseTest {
         val zeroLovedTrack = browseSampleTrack.copy(lovedCount = 0)
         val callback = buildCallback(
             catalogRepository = object : CatalogRepository by BrowseEmptyCatalogRepository {
-                override suspend fun latest(mode: LatestMode, page: Int, count: Int) = listOf(zeroLovedTrack)
+                override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean) = listOf(zeroLovedTrack)
             },
         )
 
@@ -293,9 +297,24 @@ private fun HypeMediaLibraryCallback.privateSearchParamsWithHints(): MediaLibrar
     return method.invoke(this, null) as MediaLibraryService.LibraryParams
 }
 
+private fun assertTransparentArtworkCorners(item: MediaItem) {
+    val data = item.mediaMetadata.artworkData
+    assertThat(data).isNotNull()
+    val bitmap = BitmapFactory.decodeByteArray(data, 0, data!!.size)
+    assertThat(bitmap).isNotNull()
+
+    val cornerAlpha = listOf(
+        Color.alpha(bitmap.getPixel(0, 0)),
+        Color.alpha(bitmap.getPixel(bitmap.width - 1, 0)),
+        Color.alpha(bitmap.getPixel(0, bitmap.height - 1)),
+        Color.alpha(bitmap.getPixel(bitmap.width - 1, bitmap.height - 1)),
+    )
+    assertThat(cornerAlpha).containsExactly(0, 0, 0, 0)
+}
+
 private object BrowseEmptyCatalogRepository : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = browseSampleTrack
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun blog(blogId: Int): Blog = error("Not used")
@@ -303,13 +322,11 @@ private object BrowseEmptyCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("Not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object BrowseLatestCatalogRepository : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = listOf(browseSampleTrack)
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = listOf(browseSampleTrack)
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = browseSampleTrack
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun blog(blogId: Int): Blog = error("Not used")
@@ -317,34 +334,32 @@ private object BrowseLatestCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("Not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object BrowseEmptyMeRepository : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = false
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object BrowseUnauthorizedMeRepository : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = error("HTTP 401 Unauthorized")
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = error("HTTP 401 Unauthorized")
     override suspend fun toggleFavorite(trackId: String): Boolean? = false
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object BrowseFailingMeRepository : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = error("temporary network failure")
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = error("temporary network failure")
     override suspend fun toggleFavorite(trackId: String): Boolean? = false
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
@@ -374,3 +389,20 @@ private object BrowseEmptyOfflineRepository : OfflineRepository {
 }
 
 private val BrowseTestOkHttpClient: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder().build()
+
+private object BrowseNoOpPlaybackRepository : dev.josu.hypecar.core.model.repository.PlaybackRepository {
+    override val queue: kotlinx.coroutines.flow.StateFlow<dev.josu.hypecar.core.model.PlaybackQueue> =
+        kotlinx.coroutines.flow.MutableStateFlow(dev.josu.hypecar.core.model.PlaybackQueue())
+    override suspend fun play(tracks: List<Track>, startIndex: Int) = Unit
+    override suspend fun playFromTrack(track: Track) = Unit
+    override suspend fun togglePlayPause() = Unit
+    override suspend fun skipNext() = Unit
+    override suspend fun skipPrevious() = Unit
+    override suspend fun seekTo(positionMs: Long) = Unit
+    override suspend fun toggleShuffle() = Unit
+    override suspend fun cycleRepeatMode() = Unit
+    override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
+}
+
+private fun browseTestFavoriteSyncManager() =
+    dev.josu.hypecar.core.data.repository.FavoriteSyncManager(BrowseEmptyMeRepository, BrowseNoOpPlaybackRepository)

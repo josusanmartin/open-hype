@@ -11,8 +11,6 @@
     </plurals>
     <string name="details_user_default_title">Profile</string>
     <string name="details_user_default_handle">Listener profile</string>
-    <string name="details_tag_subtitle">Tag flow</string>
-    <string name="details_tag_stat">Tagged cuts</string>
 
     <!-- Pluralised stat chips on the user profile header. -->
     <plurals name="user_profile_favorites">

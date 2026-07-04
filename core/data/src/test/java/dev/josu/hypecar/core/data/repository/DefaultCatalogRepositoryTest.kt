@@ -44,6 +44,43 @@ class DefaultCatalogRepositoryTest {
     }
 
     @Test
+    fun `latest returns fresh cached tracks without hitting network again`() = runBlocking {
+        val api = StubLatestApi(
+            pages = listOf(
+                listOf(sampleTrackDto("t1")),
+                listOf(sampleTrackDto("network")),
+            ),
+        )
+        val trackDao = FakeTrackDao()
+        val trackListDao = FakeTrackListDao()
+        val repo = DefaultCatalogRepository(api, trackDao, trackListDao, Json)
+
+        val first = repo.latest(mode = LatestMode.ALL, page = 1, count = 30)
+        val second = repo.latest(mode = LatestMode.ALL, page = 1, count = 30)
+
+        assertThat(first.map { it.id }).containsExactly("t1")
+        assertThat(second.map { it.id }).containsExactly("t1")
+        assertThat(api.callCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `forceRefresh bypasses a fresh cache and hits the network`() = runBlocking {
+        val api = StubLatestApi(
+            pages = listOf(
+                listOf(sampleTrackDto("t1")),
+                listOf(sampleTrackDto("network")),
+            ),
+        )
+        val repo = DefaultCatalogRepository(api, FakeTrackDao(), FakeTrackListDao(), Json)
+
+        repo.latest(mode = LatestMode.ALL, page = 1, count = 30)
+        val second = repo.latest(mode = LatestMode.ALL, page = 1, count = 30, forceRefresh = true)
+
+        assertThat(second.map { it.id }).containsExactly("network")
+        assertThat(api.callCount).isEqualTo(2)
+    }
+
+    @Test
     fun `latest rethrows when nothing is cached`() = runBlocking {
         val api = StubLatestApi(throwOn = listOf(true), pages = listOf(emptyList()))
         val repo = DefaultCatalogRepository(api, FakeTrackDao(), FakeTrackListDao(), Json)
@@ -63,12 +100,13 @@ private class StubLatestApi(
 ) : FakeHypeApiService() {
     private val responses = pages
     private val errors = throwOn
-    private var call = 0
+    var callCount = 0
+        private set
     constructor(initial: List<TrackDto>) : this(pages = listOf(initial))
 
     override suspend fun tracks(params: Map<String, String>): List<TrackDto> {
-        val index = call.coerceAtMost(responses.lastIndex)
-        call += 1
+        val index = callCount.coerceAtMost(responses.lastIndex)
+        callCount += 1
         if (errors.getOrNull(index) == true) throw IOException("offline")
         return responses[index]
     }

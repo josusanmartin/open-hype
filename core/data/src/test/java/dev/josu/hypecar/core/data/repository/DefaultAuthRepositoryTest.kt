@@ -17,7 +17,7 @@ class DefaultAuthRepositoryTest {
             override suspend fun getToken(username: String, password: String, deviceId: String): GetTokenResponseDto =
                 GetTokenResponseDto(username = username, token = "tok-$deviceId")
         }
-        val repo = DefaultAuthRepository(api, store)
+        val repo = DefaultAuthRepository(api, store, NoOpAccountWiper)
 
         val result = repo.login("alice", "pw")
 
@@ -33,7 +33,7 @@ class DefaultAuthRepositoryTest {
             override suspend fun getToken(username: String, password: String, deviceId: String): GetTokenResponseDto =
                 throw HttpException(Response.error<Any>(401, "".toResponseBody("text/plain".toMediaType())))
         }
-        val repo = DefaultAuthRepository(api, store)
+        val repo = DefaultAuthRepository(api, store, NoOpAccountWiper)
 
         val result = repo.login("alice", "wrong")
 
@@ -46,11 +46,48 @@ class DefaultAuthRepositoryTest {
         val store = FakeSessionStore().apply {
             savedSession = dev.josu.hypecar.core.model.AuthSession("alice", "tok")
         }
-        val repo = DefaultAuthRepository(api = object : FakeHypeApiService() {}, sessionStore = store)
+        val repo = DefaultAuthRepository(
+            api = object : FakeHypeApiService() {},
+            sessionStore = store,
+            accountDataWiper = NoOpAccountWiper,
+        )
 
         repo.logout()
 
         assertThat(store.savedSession).isNull()
         assertThat(store.cleared).isTrue()
     }
+
+    @Test
+    fun `logout wipes account-local data`() = runBlocking {
+        val store = FakeSessionStore()
+        var wiped = false
+        val repo = DefaultAuthRepository(
+            api = object : FakeHypeApiService() {},
+            sessionStore = store,
+            accountDataWiper = { wiped = true },
+        )
+
+        repo.logout()
+
+        assertThat(wiped).isTrue()
+    }
+
+    @Test
+    fun `logout still clears the session when the data wipe fails`() = runBlocking {
+        val store = FakeSessionStore().apply {
+            savedSession = dev.josu.hypecar.core.model.AuthSession("alice", "tok")
+        }
+        val repo = DefaultAuthRepository(
+            api = object : FakeHypeApiService() {},
+            sessionStore = store,
+            accountDataWiper = { error("disk unavailable") },
+        )
+
+        repo.logout()
+
+        assertThat(store.cleared).isTrue()
+    }
 }
+
+private val NoOpAccountWiper = AccountLocalDataWiper { }

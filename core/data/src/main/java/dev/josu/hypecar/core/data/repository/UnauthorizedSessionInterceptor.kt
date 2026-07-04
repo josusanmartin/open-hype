@@ -23,7 +23,11 @@ class UnauthorizedSessionInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
-        if (response.code == 401 && chain.request().url.host == apiHost) {
+        // A 401 from get_token is a wrong password on a *login attempt* — it
+        // must not invalidate the currently stored (still valid) session or
+        // flash a bogus "session expired" snackbar over the login screen.
+        val isLoginAttempt = chain.request().url.encodedPath.endsWith("/get_token")
+        if (response.code == 401 && chain.request().url.host == apiHost && !isLoginAttempt) {
             sessionGateway.invalidate()
             SessionEventBus.emit(SessionEvent.Expired)
         }

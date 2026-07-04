@@ -14,7 +14,6 @@ import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.SearchQuery
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
@@ -35,15 +34,17 @@ class DefaultCatalogRepository(
     private val trackListDao: TrackListDao,
     private val json: Json,
 ) : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> =
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> =
         cachedTrackList(
             key = "latest:${mode.apiValue}:$page:$count",
+            forceRefresh = forceRefresh,
             fetch = { api.tracks(mapOf("mode" to mode.apiValue, "page" to page.toString(), "count" to count.toString())).map { it.toModel() } },
         )
 
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> =
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> =
         cachedTrackList(
             key = "popular:${mode.apiValue}:$page:$count",
+            forceRefresh = forceRefresh,
             fetch = { api.popular(mapOf("mode" to mode.apiValue, "page" to page.toString(), "count" to count.toString())).map { it.toModel() } },
         )
 
@@ -73,19 +74,14 @@ class DefaultCatalogRepository(
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> =
         api.userFriends(username, mapOf("page" to page.toString(), "count" to count.toString())).map { it.toModel() }
 
-    override suspend fun tags(): List<Tag> = api.tags().map { it.toModel() }
-
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> =
-        cachedTrackList(
-            key = "tag:$tag:$page:$count",
-            fetch = { api.tagTracks(tag, mapOf("page" to page.toString(), "count" to count.toString())).map { it.toModel() } },
-        )
-
-    private suspend fun cachedTrackList(key: String, fetch: suspend () -> List<Track>): List<Track> {
-        val cached = trackListDao.get(key)?.let { listEntity ->
-            val ids = json.decodeTrackIdsOrNull(listEntity.trackIdsJson) ?: return@let null
-            if (ids.isEmpty()) emptyList() else hydrateTracks(ids)
-        }
+    private suspend fun cachedTrackList(key: String, forceRefresh: Boolean = false, fetch: suspend () -> List<Track>): List<Track> {
+        val cachedEntity = trackListDao.get(key)
+        val cachedIds = cachedEntity?.let { json.decodeTrackIdsOrNull(it.trackIdsJson) }
+        val cached = cachedIds?.let { ids -> if (ids.isEmpty()) emptyList() else hydrateTracks(ids) }
+        // Serve the cache only when the caller didn't force a refresh, the entry
+        // is fresh, and hydration is complete (a partially-hydrated list means the
+        // track table is missing rows for this entry — refetch rather than shrink).
+        if (!forceRefresh && cached != null && cachedEntity.isFreshTrackList() && cached.size == cachedIds.size) return cached
         return runSuspendCatchingPreservingCancellation {
             fetch().also { tracks ->
                 cacheTracks(tracks)
@@ -93,7 +89,7 @@ class DefaultCatalogRepository(
                     TrackListEntity(
                         key = key,
                         trackIdsJson = json.encodeToString(tracks.map { it.id }),
-                        updatedAtEpochSeconds = System.currentTimeMillis() / 1000,
+                        updatedAtEpochSeconds = nowEpochSeconds(),
                     ),
                 )
             }
@@ -118,28 +114,35 @@ class DefaultMeRepository(
     private val historyDao: HistoryDao,
     private val json: Json,
 ) : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> =
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> =
         cachedTrackList(
             key = "favorites:$page:$count",
+            forceRefresh = forceRefresh,
             fetch = { api.favorites(mapOf("page" to page.toString(), "count" to count.toString())).map { it.toModel() } },
         )
 
     override suspend fun toggleFavorite(trackId: String): Boolean? =
         runSuspendCatchingPreservingCancellation {
             val responseState = api.toggleFavorite(trackId).string().trim().toFavoriteState()
-            if (responseState != null) {
+            val confirmed = if (responseState != null) {
                 updateCachedFavorite(trackId, responseState)
                 responseState
             } else {
                 val confirmedTrack = runSuspendCatchingPreservingCancellation {
                     api.track(trackId).toModel()
                 }.getOrNull()
-                val confirmedState = confirmedTrack?.isLoved
                 if (confirmedTrack != null) {
                     trackDao.upsertAll(listOf(confirmedTrack.toEntity()))
                 }
-                confirmedState
+                confirmedTrack?.isLoved
             }
+            // Membership of the favorites lists just changed server-side; drop the
+            // cached pages so the next read (Library tab, Auto section, offline
+            // sync) refetches instead of serving a fresh-but-wrong list.
+            if (confirmed != null) {
+                trackListDao.deleteByKeyPrefix("favorites:")
+            }
+            confirmed
         }.getOrNull()
 
     private suspend fun updateCachedFavorite(trackId: String, isLoved: Boolean) {
@@ -170,15 +173,17 @@ class DefaultMeRepository(
         }.getOrElse { cached }
     }
 
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> =
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> =
         cachedTrackList(
             key = "playlist:$playlistId:$page:$count",
+            forceRefresh = forceRefresh,
             fetch = { api.playlist(playlistId, mapOf("page" to page.toString(), "count" to count.toString())).map { it.toModel() } },
         )
 
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> =
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> =
         cachedTrackList(
             key = "feed:${mode.apiValue}:$page:$count",
+            forceRefresh = forceRefresh,
             fetch = { api.feed(mapOf("mode" to mode.apiValue, "page" to page.toString(), "count" to count.toString())).map { it.toModel() } },
         ).map { FeedItem(it) }
 
@@ -192,12 +197,14 @@ class DefaultMeRepository(
         return ids.mapNotNull { indexed[it]?.toModel() }
     }
 
-    private suspend fun cachedTrackList(key: String, fetch: suspend () -> List<Track>): List<Track> {
-        val cached = trackListDao.get(key)?.let { listEntity ->
-            val ids = json.decodeTrackIdsOrNull(listEntity.trackIdsJson) ?: return@let null
+    private suspend fun cachedTrackList(key: String, forceRefresh: Boolean = false, fetch: suspend () -> List<Track>): List<Track> {
+        val cachedEntity = trackListDao.get(key)
+        val cachedIds = cachedEntity?.let { json.decodeTrackIdsOrNull(it.trackIdsJson) }
+        val cached = cachedIds?.let { ids ->
             val indexed = trackDao.byIdsChunked(ids).associateBy { it.id }
             ids.mapNotNull { indexed[it]?.toModel() }
         }
+        if (!forceRefresh && cached != null && cachedEntity.isFreshTrackList() && cached.size == cachedIds.size) return cached
         return runSuspendCatchingPreservingCancellation {
             fetch().also { tracks ->
                 trackDao.upsertAll(tracks.map { it.toEntity() })
@@ -205,7 +212,7 @@ class DefaultMeRepository(
                     TrackListEntity(
                         key = key,
                         trackIdsJson = json.encodeToString(tracks.map { it.id }),
-                        updatedAtEpochSeconds = System.currentTimeMillis() / 1000,
+                        updatedAtEpochSeconds = nowEpochSeconds(),
                     ),
                 )
             }
@@ -221,11 +228,13 @@ class DefaultSearchRepository(
 ) : SearchRepository {
     override suspend fun searchTracks(query: SearchQuery, page: Int, count: Int): List<Track> {
         val cacheKey = "search:${query.value}:${query.sort.apiValue}:$page:$count"
-        val cached = trackListDao.get(cacheKey)?.let {
-            val ids = json.decodeTrackIdsOrNull(it.trackIdsJson) ?: return@let null
+        val cachedEntity = trackListDao.get(cacheKey)
+        val cachedIds = cachedEntity?.let { json.decodeTrackIdsOrNull(it.trackIdsJson) }
+        val cached = cachedIds?.let { ids ->
             val indexed = trackDao.byIdsChunked(ids).associateBy { entity -> entity.id }
             ids.mapNotNull { id -> indexed[id]?.toModel() }
         }
+        if (cached != null && cachedEntity.isFreshTrackList() && cached.size == cachedIds.size) return cached
         return runSuspendCatchingPreservingCancellation {
             api.tracks(
                 mapOf(
@@ -240,7 +249,7 @@ class DefaultSearchRepository(
                     TrackListEntity(
                         key = cacheKey,
                         trackIdsJson = json.encodeToString(tracks.map { it.id }),
-                        updatedAtEpochSeconds = System.currentTimeMillis() / 1000,
+                        updatedAtEpochSeconds = nowEpochSeconds(),
                     ),
                 )
             }
@@ -286,3 +295,10 @@ private fun String.toFavoriteState(): Boolean? =
 
 private fun Json.decodeTrackIdsOrNull(raw: String): List<String>? =
     runCatching { decodeFromString<List<String>>(raw) }.getOrNull()
+
+private const val TrackListFreshnessSeconds = 5 * 60L
+
+private fun TrackListEntity?.isFreshTrackList(nowEpochSeconds: Long = nowEpochSeconds()): Boolean =
+    this != null && nowEpochSeconds - updatedAtEpochSeconds <= TrackListFreshnessSeconds
+
+private fun nowEpochSeconds(): Long = System.currentTimeMillis() / 1000L

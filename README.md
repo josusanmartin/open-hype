@@ -1,8 +1,6 @@
 # Hype Car
 
-[![build](https://img.shields.io/badge/build-passing-brightgreen?logo=githubactions&logoColor=white)](.github/workflows/build.yml)
-[![tests](https://img.shields.io/badge/tests-197%20passing-brightgreen)](CHANGELOG.md)
-[![coverage](https://img.shields.io/badge/coverage-62.3%25%20lines-brightgreen)](CHANGELOG.md)
+[![build](https://github.com/josusanmartin/open-hype/actions/workflows/build.yml/badge.svg)](https://github.com/josusanmartin/open-hype/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![min sdk](https://img.shields.io/badge/min%20sdk-26-blue?logo=android&logoColor=white)](gradle.properties)
 [![target sdk](https://img.shields.io/badge/target%20sdk-35-blue?logo=android&logoColor=white)](gradle.properties)
@@ -167,7 +165,7 @@ Declared in `app/src/main/AndroidManifest.xml`:
 
 ## Releases
 
-Release artifacts are generated on demand from the current source tree. Per-version changelog notes live in [`CHANGELOG.md`](CHANGELOG.md).
+Published builds live on [GitHub Releases](https://github.com/josusanmartin/open-hype/releases) — pushing a `v*` tag packages and attaches the APK/AAB automatically. Per-version changelog notes live in [`CHANGELOG.md`](CHANGELOG.md). To stage the same artifacts locally from the current tree:
 
 ```bash
 scripts/dev.sh release

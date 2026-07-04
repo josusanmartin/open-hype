@@ -147,7 +147,8 @@ dependencies {
 
 tasks.register("validateReleaseSigning") {
     group = "verification"
-    description = "Fails release packaging when upload-key signing credentials are missing."
+    description = "Warns (or fails with -PrequireReleaseSigning=true) when upload-key signing credentials are missing."
+    val requireSigning = providers.gradleProperty("requireReleaseSigning").orNull == "true"
     doLast {
         val missing =
             releaseSigningInputs
@@ -155,9 +156,19 @@ tasks.register("validateReleaseSigning") {
                 .keys
                 .joinToString()
         if (missing.isNotBlank()) {
-            throw GradleException(
-                "Release signing is required for Play-ready artifacts. Missing: $missing. " +
-                    "Set these as Gradle properties or environment variables.",
+            // The default `build`/`assemble` lifecycle reaches assembleRelease,
+            // so failing here broke every machine without release credentials.
+            // Local builds produce an unsigned release; CI's signed packaging
+            // passes the flag to keep the hard guarantee.
+            if (requireSigning) {
+                throw GradleException(
+                    "Release signing is required for Play-ready artifacts. Missing: $missing. " +
+                        "Set these as Gradle properties or environment variables.",
+                )
+            }
+            logger.warn(
+                "Release signing credentials missing ($missing); producing an UNSIGNED release build. " +
+                    "Pass -PrequireReleaseSigning=true to fail instead.",
             )
         }
     }

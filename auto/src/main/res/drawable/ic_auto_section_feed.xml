@@ -3,10 +3,7 @@
     android:height="96dp"
     android:viewportWidth="96"
     android:viewportHeight="96">
-    <!-- Feed: stacked lines on dark background. -->
-    <path
-        android:fillColor="#FF111112"
-        android:pathData="M0,0h96v96h-96z" />
+    <!-- Feed: transparent glyph so car hosts cannot tint it into a solid square. -->
     <path
         android:fillColor="#FFFFB07B"
         android:pathData="M18,28 L78,28 L78,36 L18,36 Z M18,44 L78,44 L78,52 L18,52 Z M18,60 L60,60 L60,68 L18,68 Z" />

@@ -62,9 +62,3 @@ data class FavoritesCountDto(
     @SerialName("followers") val followers: Int = 0,
     @SerialName("user") val user: Int = 0,
 )
-
-@Serializable
-data class TagDto(
-    @SerialName("tag_name") val name: String,
-    val priority: Boolean = false,
-)

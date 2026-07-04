@@ -3,8 +3,9 @@ package dev.josu.hypecar.feature.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.toUiErrorKind
+import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.repository.AuthRepository
-import dev.josu.hypecar.core.network.toApiError
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,7 +14,7 @@ import javax.inject.Inject
 
 data class LoginUiState(
     val isLoading: Boolean = false,
-    val error: String? = null,
+    val error: UiErrorKind? = null,
 )
 
 @HiltViewModel
@@ -37,9 +38,8 @@ class LoginViewModel @Inject constructor(
             } else {
                 LoginUiState(
                     error = result.exceptionOrNull()
-                        ?.toApiError(loginAttempt = true)
-                        ?.message
-                        ?: "Login failed.",
+                        ?.toUiErrorKind(loginAttempt = true)
+                        ?: UiErrorKind.Unknown,
                 )
             }
         }

@@ -25,8 +25,8 @@ body:
     id: version
     attributes:
       label: App version
-      description: From Settings → About, or the dist/ folder you installed from.
-      placeholder: e.g. 0.18.0
+      description: The v… footer at the bottom of the Settings screen, or the GitHub Release you installed.
+      placeholder: e.g. 0.31.0
     validations:
       required: true
   - type: dropdown

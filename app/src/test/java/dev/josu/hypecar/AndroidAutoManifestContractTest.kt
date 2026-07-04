@@ -36,8 +36,11 @@ class AndroidAutoManifestContractTest {
     }
 
     @Test
-    fun `manifest declares the Assistant voice-search intent filter`() {
-        // Required for "Hey Google, play X on Hype Machine" to route into onSearch.
+    fun `manifest declares the Assistant voice-search marker on the media service`() {
+        // Android Auto's documented voice-search contract (and lint's
+        // MissingIntentFilterForMediaSearch error) require this action on the
+        // media service; the spoken query itself arrives via
+        // onSetMediaItems' requestMetadata.searchQuery.
         assertThat(manifestText).contains("android.media.action.MEDIA_PLAY_FROM_SEARCH")
     }
 

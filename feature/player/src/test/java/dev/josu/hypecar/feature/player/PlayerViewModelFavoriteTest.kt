@@ -13,13 +13,17 @@ import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -42,7 +46,7 @@ class PlayerViewModelFavoriteTest {
     fun `toggleFavorite updates current player heart when api succeeds`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
         val meRepository = FakeMeRepository(toggleResponse = true)
-        val viewModel = PlayerViewModel(playbackRepository, meRepository)
+        val viewModel = newPlayerViewModel(playbackRepository, meRepository)
 
         viewModel.toggleFavorite()
         advanceUntilIdle()
@@ -56,7 +60,7 @@ class PlayerViewModelFavoriteTest {
     fun `toggleFavorite reverts player heart when api fails`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
         val meRepository = FakeMeRepository(toggleResponse = null)
-        val viewModel = PlayerViewModel(playbackRepository, meRepository)
+        val viewModel = newPlayerViewModel(playbackRepository, meRepository)
 
         viewModel.toggleFavorite()
         advanceUntilIdle()
@@ -70,10 +74,27 @@ class PlayerViewModelFavoriteTest {
     }
 
     @Test
+    fun `toggleFavorite emits a visible error when api fails`() = runTest {
+        val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
+        val meRepository = FakeMeRepository(toggleResponse = null)
+        val viewModel = newPlayerViewModel(playbackRepository, meRepository)
+        val errors = async {
+            withTimeout(2_000) {
+                viewModel.favoriteErrors.take(1).toList()
+            }
+        }
+
+        viewModel.toggleFavorite()
+        advanceUntilIdle()
+
+        assertThat(errors.await()).hasSize(1)
+    }
+
+    @Test
     fun `toggleFavorite does not ignore rapid taps while api sync is pending`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
         val meRepository = BlockingFakeMeRepository()
-        val viewModel = PlayerViewModel(playbackRepository, meRepository)
+        val viewModel = newPlayerViewModel(playbackRepository, meRepository)
 
         viewModel.toggleFavorite()
         advanceUntilIdle()
@@ -100,7 +121,7 @@ class PlayerViewModelFavoriteTest {
     fun `toggleFavorite uses pending desired state for immediate second tap`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
         val meRepository = FakeMeRepository(toggleResponse = true)
-        val viewModel = PlayerViewModel(playbackRepository, meRepository)
+        val viewModel = newPlayerViewModel(playbackRepository, meRepository)
 
         viewModel.toggleFavorite()
         viewModel.toggleFavorite()
@@ -118,7 +139,7 @@ class PlayerViewModelFavoriteTest {
     fun `toggleFavorite retries when server returns stale opposite state`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
         val meRepository = SequenceFakeMeRepository(serverLovedResponses = listOf(false, true))
-        val viewModel = PlayerViewModel(playbackRepository, meRepository)
+        val viewModel = newPlayerViewModel(playbackRepository, meRepository)
 
         viewModel.toggleFavorite()
         advanceUntilIdle()
@@ -134,7 +155,7 @@ class PlayerViewModelFavoriteTest {
             track = sampleTrack(isLoved = false),
             durationMs = 200_000,
         )
-        val viewModel = PlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
+        val viewModel = newPlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
 
         viewModel.seekToFraction(0.75f)
         advanceUntilIdle()
@@ -148,7 +169,7 @@ class PlayerViewModelFavoriteTest {
             track = sampleTrack(isLoved = false),
             durationMs = 200_000,
         )
-        val viewModel = PlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
+        val viewModel = newPlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
 
         viewModel.seekToFraction(1.4f)
         advanceUntilIdle()
@@ -159,7 +180,7 @@ class PlayerViewModelFavoriteTest {
     @Test
     fun `toggleShuffle delegates to playback repository`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
-        val viewModel = PlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
+        val viewModel = newPlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
 
         viewModel.toggleShuffle()
         advanceUntilIdle()
@@ -170,7 +191,7 @@ class PlayerViewModelFavoriteTest {
     @Test
     fun `cycleRepeatMode delegates to playback repository`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
-        val viewModel = PlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
+        val viewModel = newPlayerViewModel(playbackRepository, FakeMeRepository(toggleResponse = true))
 
         viewModel.cycleRepeatMode()
         advanceUntilIdle()
@@ -234,7 +255,7 @@ private class FakeMeRepository(
 ) : MeRepository {
     val toggledTrackIds = mutableListOf<String>()
 
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
 
     override suspend fun toggleFavorite(trackId: String): Boolean? {
         toggledTrackIds += trackId
@@ -242,8 +263,8 @@ private class FakeMeRepository(
     }
 
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
@@ -251,7 +272,7 @@ private class BlockingFakeMeRepository : MeRepository {
     val toggledTrackIds = mutableListOf<String>()
     private val pendingToggles = ArrayDeque<CompletableDeferred<Boolean?>>()
 
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
 
     override suspend fun toggleFavorite(trackId: String): Boolean? {
         toggledTrackIds += trackId
@@ -263,8 +284,8 @@ private class BlockingFakeMeRepository : MeRepository {
     }
 
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
@@ -274,7 +295,7 @@ private class SequenceFakeMeRepository(
     val toggledTrackIds = mutableListOf<String>()
     private val responses = ArrayDeque(serverLovedResponses)
 
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
 
     override suspend fun toggleFavorite(trackId: String): Boolean? {
         toggledTrackIds += trackId
@@ -282,8 +303,8 @@ private class SequenceFakeMeRepository(
     }
 
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
@@ -300,4 +321,10 @@ private fun sampleTrack(isLoved: Boolean) = Track(
     postUrl = "https://www.destroyexist.com/2026/03/la-sagne-music-in-neighbourhood.html",
     itunesUrl = "https://hypem.com/go/itunes_search/L.A.%20Sagne",
     isLoved = isLoved,
+)
+
+private fun newPlayerViewModel(playback: PlaybackRepository, me: MeRepository) = PlayerViewModel(
+    playbackRepository = playback,
+    meRepository = me,
+    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(me, playback),
 )

@@ -18,4 +18,10 @@
         <item quantity="one">%1$d loved · reposted %2$dx</item>
         <item quantity="other">%1$d loved · reposted %2$dx</item>
     </plurals>
+    <string name="catalog_mode_all">All</string>
+    <string name="catalog_mode_freshest">Freshest</string>
+    <string name="catalog_mode_no_remixes">No remixes</string>
+    <string name="catalog_mode_only_remixes">Only remixes</string>
+    <string name="catalog_mode_now">Now</string>
+    <string name="catalog_mode_last_week">Last week</string>
 </resources>

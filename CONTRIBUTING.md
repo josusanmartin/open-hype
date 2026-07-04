@@ -12,7 +12,8 @@ Clone, then verify the build:
 
 ```bash
 ./gradlew testDebugUnitTest lintDebug
-# or, with the same gates CI runs:
+# or, with the fast subset of the CI gates (CI additionally runs release-variant
+# tests/lint, an R8 smoke build, and the Kover coverage floor):
 scripts/dev.sh check
 ```
 
@@ -43,7 +44,7 @@ See the **Modules** section in the README. The short version:
 - Avoid `!!` non-null assertions; the codebase intentionally has zero.
 - Prefer `runSuspendCatchingPreservingCancellation` over plain `try/catch` in suspend functions — `CancellationException` must propagate so coroutine cancellation works.
 - Use repository interfaces from `core:model`, not the `Default*` classes directly. This keeps tests simple (substitute fakes, not mocks).
-- New user-visible strings go in `strings.xml` (per-module under `feature/<x>/src/main/res/values/`). Add the same key to `values-es/strings.xml` if you can.
+- New user-visible strings go in `strings.xml` (per-module under `feature/<x>/src/main/res/values/`). Add the same key to `values-es/strings.xml` — full key parity with the Spanish reference locale is required, not optional.
 
 ## Tests
 

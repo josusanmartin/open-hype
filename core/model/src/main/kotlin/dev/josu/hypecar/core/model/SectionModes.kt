@@ -1,21 +1,21 @@
 package dev.josu.hypecar.core.model
 
-enum class LatestMode(val apiValue: String, val displayLabel: String) {
-    ALL("all", "All"),
-    FRESHEST("fresh", "Freshest"),
-    NO_REMIXES("noremix", "No remixes"),
-    ONLY_REMIXES("remix", "Only remixes"),
+enum class LatestMode(val apiValue: String) {
+    ALL("all"),
+    FRESHEST("fresh"),
+    NO_REMIXES("noremix"),
+    ONLY_REMIXES("remix"),
 }
 
-enum class PopularMode(val apiValue: String, val displayLabel: String) {
-    NOW("now", "Now"),
-    NO_REMIXES("noremix", "No remixes"),
-    ONLY_REMIXES("remix", "Only remixes"),
-    LAST_WEEK("lastweek", "Last week"),
+enum class PopularMode(val apiValue: String) {
+    NOW("now"),
+    NO_REMIXES("noremix"),
+    ONLY_REMIXES("remix"),
+    LAST_WEEK("lastweek"),
 }
 
-enum class FeedMode(val apiValue: String, val displayLabel: String) {
-    ALL("all", "All"),
-    FRIENDS("friends", "Friends"),
-    BLOGS("blogs", "Blogs"),
+enum class FeedMode(val apiValue: String) {
+    ALL("all"),
+    FRIENDS("friends"),
+    BLOGS("blogs"),
 }

@@ -36,8 +36,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
@@ -57,21 +59,14 @@ data class BlogDetailUiState(
     val blog: Blog? = null,
     val tracks: List<Track> = emptyList(),
     val loading: Boolean = true,
-    val error: String? = null,
+    val error: UiErrorKind? = null,
 )
 
 data class UserDetailUiState(
     val user: User? = null,
     val tracks: List<Track> = emptyList(),
     val loading: Boolean = true,
-    val error: String? = null,
-)
-
-data class TagDetailUiState(
-    val tag: String,
-    val tracks: List<Track> = emptyList(),
-    val loading: Boolean = true,
-    val error: String? = null,
+    val error: UiErrorKind? = null,
 )
 
 @HiltViewModel
@@ -85,6 +80,14 @@ class BlogDetailViewModel @Inject constructor(
     val state: StateFlow<BlogDetailUiState> = _state.asStateFlow()
 
     init {
+        load()
+    }
+
+    /** A transient failure on open must not leave a dead screen. */
+    fun retry() = load()
+
+    private fun load() {
+        _state.value = BlogDetailUiState()
         viewModelScope.launch {
             _state.value = runSuspendCatchingPreservingCancellation {
                 BlogDetailUiState(
@@ -92,7 +95,7 @@ class BlogDetailViewModel @Inject constructor(
                     tracks = catalogRepository.blogTracks(blogId, count = 30),
                     loading = false,
                 )
-            }.getOrElse { BlogDetailUiState(loading = false, error = it.message) }
+            }.getOrElse { BlogDetailUiState(loading = false, error = it.toUiErrorKind()) }
         }
     }
 
@@ -112,6 +115,13 @@ class UserDetailViewModel @Inject constructor(
     val state: StateFlow<UserDetailUiState> = _state.asStateFlow()
 
     init {
+        load()
+    }
+
+    fun retry() = load()
+
+    private fun load() {
+        _state.value = UserDetailUiState()
         viewModelScope.launch {
             _state.value = runSuspendCatchingPreservingCancellation {
                 UserDetailUiState(
@@ -119,34 +129,7 @@ class UserDetailViewModel @Inject constructor(
                     tracks = catalogRepository.userFavorites(username, count = 30),
                     loading = false,
                 )
-            }.getOrElse { UserDetailUiState(loading = false, error = it.message) }
-        }
-    }
-
-    fun play(index: Int) {
-        viewModelScope.launch { playbackRepository.play(_state.value.tracks, index) }
-    }
-}
-
-@HiltViewModel
-class TagDetailViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
-    private val catalogRepository: CatalogRepository,
-    private val playbackRepository: PlaybackRepository,
-) : ViewModel() {
-    private val tag: String = checkNotNull(savedStateHandle["tag"])
-    private val _state = MutableStateFlow(TagDetailUiState(tag = tag))
-    val state: StateFlow<TagDetailUiState> = _state.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            _state.value = runSuspendCatchingPreservingCancellation {
-                TagDetailUiState(
-                    tag = tag,
-                    tracks = catalogRepository.tagTracks(tag, count = 30),
-                    loading = false,
-                )
-            }.getOrElse { TagDetailUiState(tag = tag, loading = false, error = it.message) }
+            }.getOrElse { UserDetailUiState(loading = false, error = it.toUiErrorKind()) }
         }
     }
 
@@ -183,6 +166,7 @@ fun BlogDetailRoute(
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
         onBack = onBack,
+        onRetry = viewModel::retry,
     )
 }
 
@@ -200,109 +184,114 @@ fun UserDetailRoute(
         tracks = state.tracks,
         isLoading = state.loading,
         error = state.error,
+        onRetry = viewModel::retry,
         header = {
-            Column {
-                EditorialHeroHeader(
-                    title = profile?.title ?: stringResource(R.string.details_user_default_title),
-                    subtitle = profile?.handle ?: stringResource(R.string.details_user_default_handle),
-                    imageUrl = state.tracks.firstOrNull()?.bestThumbnail(),
-                    chips = emptyList(),
-                    selectedChipIndex = 0,
-                    onChipSelected = {},
-                    onUtilityClick = null,
-                    height = 238.dp,
-                    titleSize = 40.sp,
-                    titleLineHeight = 40.sp,
-                    compactMode = isAutomotive,
-                )
-                if (profile != null) {
-                    Surface(
-                        modifier = Modifier.padding(
-                            horizontal = if (isAutomotive) 8.dp else 12.dp,
-                            vertical = if (isAutomotive) 6.dp else 12.dp,
-                        ),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 14.dp else 20.dp),
-                        color = Color(0xFF151211),
-                        contentColor = Color.White,
-                    ) {
-                        // Format the three counts here so they go through the
-                        // resource system. The model carries raw integers now
-                        // (see UserProfileHeaderUiModel for context).
-                        val favoritesLabel = androidx.compose.ui.res.pluralStringResource(
-                            id = R.plurals.user_profile_favorites,
-                            count = profile.favoritesCount,
-                            profile.favoritesCount,
-                        )
-                        val followersLabel = androidx.compose.ui.res.pluralStringResource(
-                            id = R.plurals.user_profile_followers,
-                            count = profile.followersCount,
-                            profile.followersCount,
-                        )
-                        val followingLabel = androidx.compose.ui.res.pluralStringResource(
-                            id = R.plurals.user_profile_following,
-                            count = profile.followingCount,
-                            profile.followingCount,
-                        )
-                        val statChips = listOf(favoritesLabel, followersLabel, followingLabel)
-                        val summaryLine = statChips.joinToString(separator = " · ")
-                        Column(
+            // Same back affordance Blog/Tag details get — the user profile
+            // screen was the one detail surface without a visible way out.
+            androidx.compose.foundation.layout.Box {
+                Column {
+                    EditorialHeroHeader(
+                        title = profile?.title ?: stringResource(R.string.details_user_default_title),
+                        subtitle = profile?.handle ?: stringResource(R.string.details_user_default_handle),
+                        imageUrl = state.tracks.firstOrNull()?.bestThumbnail(),
+                        chips = emptyList(),
+                        selectedChipIndex = 0,
+                        onChipSelected = {},
+                        onUtilityClick = null,
+                        height = 238.dp,
+                        titleSize = 40.sp,
+                        titleLineHeight = 40.sp,
+                        compactMode = isAutomotive,
+                    )
+                    if (profile != null) {
+                        Surface(
                             modifier = Modifier.padding(
-                                horizontal = if (isAutomotive) 12.dp else 16.dp,
-                                vertical = if (isAutomotive) 10.dp else 12.dp,
+                                horizontal = if (isAutomotive) 8.dp else 12.dp,
+                                vertical = if (isAutomotive) 6.dp else 12.dp,
                             ),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 14.dp else 20.dp),
+                            color = Color(0xFF151211),
+                            contentColor = Color.White,
                         ) {
-                            Text(
-                                text = summaryLine,
-                                style = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFFE7D7C9)),
+                            // Format the three counts here so they go through the
+                            // resource system. The model carries raw integers now
+                            // (see UserProfileHeaderUiModel for context).
+                            val favoritesLabel = androidx.compose.ui.res.pluralStringResource(
+                                id = R.plurals.user_profile_favorites,
+                                count = profile.favoritesCount,
+                                profile.favoritesCount,
                             )
-                            FlowRow(
-                                modifier = Modifier.padding(top = 12.dp),
-                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                            val followersLabel = androidx.compose.ui.res.pluralStringResource(
+                                id = R.plurals.user_profile_followers,
+                                count = profile.followersCount,
+                                profile.followersCount,
+                            )
+                            val followingLabel = androidx.compose.ui.res.pluralStringResource(
+                                id = R.plurals.user_profile_following,
+                                count = profile.followingCount,
+                                profile.followingCount,
+                            )
+                            val statChips = listOf(favoritesLabel, followersLabel, followingLabel)
+                            val summaryLine = statChips.joinToString(separator = " · ")
+                            Column(
+                                modifier = Modifier.padding(
+                                    horizontal = if (isAutomotive) 12.dp else 16.dp,
+                                    vertical = if (isAutomotive) 10.dp else 12.dp,
+                                ),
                             ) {
-                                statChips.forEach { stat ->
-                                    Surface(
-                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 10.dp else 16.dp),
-                                        color = Color(0xFF2B211E),
-                                    ) {
-                                        Text(
-                                            text = stat,
-                                            modifier = Modifier.padding(
-                                                horizontal = if (isAutomotive) 8.dp else 12.dp,
-                                                vertical = if (isAutomotive) 5.dp else 8.dp,
-                                            ),
-                                            style = MaterialTheme.typography.labelLarge.copy(color = hypeTokens.brand.primaryWash),
-                                        )
+                                Text(
+                                    text = summaryLine,
+                                    style = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFFE7D7C9)),
+                                )
+                                FlowRow(
+                                    modifier = Modifier.padding(top = 12.dp),
+                                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                                ) {
+                                    statChips.forEach { stat ->
+                                        Surface(
+                                            shape = androidx.compose.foundation.shape.RoundedCornerShape(if (isAutomotive) 10.dp else 16.dp),
+                                            color = Color(0xFF2B211E),
+                                        ) {
+                                            Text(
+                                                text = stat,
+                                                modifier = Modifier.padding(
+                                                    horizontal = if (isAutomotive) 8.dp else 12.dp,
+                                                    vertical = if (isAutomotive) 5.dp else 8.dp,
+                                                ),
+                                                style = MaterialTheme.typography.labelLarge.copy(color = hypeTokens.brand.primaryWash),
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+                if (onBack != null) {
+                    androidx.compose.material3.IconButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .align(androidx.compose.ui.Alignment.TopStart)
+                            .padding(
+                                start = 8.dp,
+                                top = androidx.compose.foundation.layout.WindowInsets.statusBars
+                                    .asPaddingValues()
+                                    .calculateTopPadding() + 4.dp,
+                            )
+                            .size(44.dp)
+                            .pressFeedback(pressedScale = 0.90f, label = "detailBackPress"),
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.details_back),
+                            tint = Color.White,
+                        )
+                    }
+                }
             }
         },
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
-    )
-}
-
-@Composable
-fun TagDetailRoute(
-    onBlogClick: (Int) -> Unit,
-    onBack: (() -> Unit)? = null,
-    viewModel: TagDetailViewModel = hiltViewModel(),
-) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    EditorialDetailFeed(
-        title = "#${state.tag}",
-        subtitle = stringResource(R.string.details_tag_subtitle),
-        imageUrl = state.tracks.firstOrNull()?.bestThumbnail(),
-        stats = listOf(stringResource(R.string.details_tag_stat)),
-        tracks = state.tracks,
-        isLoading = state.loading,
-        error = state.error,
-        onTrackClick = viewModel::play,
-        onBlogClick = { onBlogClick(it.postedById) },
-        onBack = onBack,
     )
 }
 
@@ -314,16 +303,18 @@ private fun EditorialDetailFeed(
     stats: List<String>,
     tracks: List<Track>,
     isLoading: Boolean,
-    error: String?,
+    error: UiErrorKind?,
     onTrackClick: (Int) -> Unit,
     onBlogClick: (Track) -> Unit,
     onBack: (() -> Unit)? = null,
+    onRetry: (() -> Unit)? = null,
 ) {
     val isAutomotive = rememberIsAutomotiveUi()
     TrackListBody(
         tracks = tracks,
         isLoading = isLoading,
         error = error,
+        onRetry = onRetry,
         header = {
             // Detail screens previously had no back affordance — only the
             // system gesture. Render a small back arrow in the top-left so

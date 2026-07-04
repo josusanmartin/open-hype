@@ -37,7 +37,7 @@ class PlayerRouteScreenTest {
         val playback = StubPlayback(initial = PlaybackQueue())
         composeRule.setContent {
             HypeTheme {
-                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
             }
         }
 
@@ -57,7 +57,7 @@ class PlayerRouteScreenTest {
         )
         composeRule.setContent {
             HypeTheme {
-                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
             }
         }
 
@@ -82,7 +82,7 @@ class PlayerRouteScreenTest {
         )
         composeRule.setContent {
             HypeTheme {
-                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
             }
         }
 
@@ -104,7 +104,7 @@ class PlayerRouteScreenTest {
         )
         composeRule.setContent {
             HypeTheme {
-                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
             }
         }
 
@@ -127,7 +127,7 @@ class PlayerRouteScreenTest {
         )
         composeRule.setContent {
             HypeTheme {
-                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, NoOpMe)) }
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
             }
         }
 
@@ -152,7 +152,7 @@ class PlayerRouteScreenTest {
         val me = AcceptingMe(toggleResult = true)
         composeRule.setContent {
             HypeTheme {
-                Surface { PlayerRoute(viewModel = PlayerViewModel(playback, me)) }
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, me)) }
             }
         }
 
@@ -204,19 +204,25 @@ private class StubPlayback(initial: PlaybackQueue) : PlaybackRepository {
 }
 
 private object NoOpMe : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
 private class AcceptingMe(private val toggleResult: Boolean) : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = toggleResult
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
+
+private fun newPlayerViewModel(playback: PlaybackRepository, me: MeRepository) = PlayerViewModel(
+    playbackRepository = playback,
+    meRepository = me,
+    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(me, playback),
+)

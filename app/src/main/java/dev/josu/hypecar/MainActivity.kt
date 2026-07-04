@@ -46,6 +46,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -56,13 +57,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -73,6 +77,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import dagger.hilt.android.AndroidEntryPoint
 import dev.josu.hypecar.core.ui.HypeTheme
 import dev.josu.hypecar.core.ui.hypeTokens
@@ -81,7 +86,6 @@ import dev.josu.hypecar.feature.auth.LoginRoute
 import dev.josu.hypecar.feature.catalog.LatestRoute
 import dev.josu.hypecar.feature.catalog.PopularRoute
 import dev.josu.hypecar.feature.details.BlogDetailRoute
-import dev.josu.hypecar.feature.details.TagDetailRoute
 import dev.josu.hypecar.feature.details.UserDetailRoute
 import dev.josu.hypecar.feature.library.LibraryRoute
 import dev.josu.hypecar.feature.player.PlayerRoute
@@ -91,10 +95,12 @@ import dev.josu.hypecar.feature.search.SearchRoute
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The app's own surfaces are warm-dark on every screen except login,
+        // regardless of the system theme — so system bar icons default to
+        // light. Login flips them via SystemBarIconAppearance below.
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(
+            statusBarStyle = SystemBarStyle.dark(
                 scrim = android.graphics.Color.TRANSPARENT,
-                darkScrim = android.graphics.Color.TRANSPARENT,
             ),
             navigationBarStyle = SystemBarStyle.dark(
                 scrim = android.graphics.Color.TRANSPARENT,
@@ -116,6 +122,46 @@ class MainActivity : ComponentActivity() {
             HypeTheme(isAutomotive = isAutomotive) {
                 MainApp()
             }
+        }
+    }
+}
+
+/**
+ * Flips the status/navigation bar icon tint for the one screen (login) whose
+ * background is cream instead of the app's warm-dark canvas. Dark icons over
+ * a near-black player, or light icons over the cream login, are invisible.
+ */
+@Composable
+private fun SystemBarIconAppearance(lightBackground: Boolean) {
+    val view = LocalView.current
+    DisposableEffect(lightBackground, view) {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = lightBackground
+            controller.isAppearanceLightNavigationBars = lightBackground
+        }
+        onDispose { }
+    }
+}
+
+@Composable
+private fun rememberSizedImageRequest(
+    url: String?,
+    width: Dp,
+    height: Dp,
+): Any? {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val widthPx = with(density) { width.roundToPx().coerceAtLeast(1) }
+    val heightPx = with(density) { height.roundToPx().coerceAtLeast(1) }
+    return remember(context, url, widthPx, heightPx) {
+        url?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(widthPx, heightPx)
+                .crossfade(false)
+                .build()
         }
     }
 }
@@ -183,12 +229,14 @@ fun MainApp() {
     val chromeMetrics = if (isAutomotive) AppChromeMetrics.automotive() else AppChromeMetrics.phone()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val chromeViewModel: AppChromeViewModel = hiltViewModel()
-    val queue by chromeViewModel.queue.collectAsStateWithLifecycle()
+    val miniPlayerState by chromeViewModel.miniPlayer.collectAsStateWithLifecycle()
+    val hasActivePlayback by chromeViewModel.hasActivePlayback.collectAsStateWithLifecycle()
     val connectivity by chromeViewModel.connectivity.collectAsStateWithLifecycle()
     MediaNotificationPermissionGate(
-        enabled = !isAutomotive && (queue.isPlaying || queue.current != null),
+        enabled = !isAutomotive && hasActivePlayback,
     )
     val currentRoute = backStackEntry?.destination?.route
+    SystemBarIconAppearance(lightBackground = currentRoute == "login")
     val destinations = listOf(
         NavDestinationItem("latest", stringResource(R.string.nav_latest)) {
             Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(23.dp))
@@ -207,11 +255,10 @@ fun MainApp() {
         },
     )
     val showBottomBar = currentRoute in destinations.map { it.route } && currentRoute != "player"
-    val miniPlayer = if (currentRoute != "player" && showBottomBar) {
-        MiniPlayerUiState.fromQueue(queue)
-    } else {
-        null
-    }
+    // The mini player stays visible on detail routes (blog/user/tag) too —
+    // starting playback from a detail screen must leave transport controls on
+    // screen. Only the full player screen replaces it.
+    val miniPlayer = if (currentRoute == "player") null else miniPlayerState
 
     // Listen for SessionEventBus emissions (UnauthorizedSessionInterceptor
     // emits Expired on 401) and surface a snackbar so the user isn't
@@ -265,7 +312,7 @@ fun MainApp() {
                         }
                         MiniPlayerBar(
                             uiState = miniPlayerState,
-                            onOpenPlayer = { navController.navigate("player") },
+                            onOpenPlayer = { navController.navigate("player") { launchSingleTop = true } },
                             onTogglePlayPause = {
                                 tick()
                                 chromeViewModel.togglePlayPause()
@@ -336,22 +383,21 @@ fun MainApp() {
             modifier = Modifier.padding(innerPadding),
         ) {
             composable("latest") {
-                LatestRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") })
+                LatestRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") { launchSingleTop = true } })
             }
             composable("popular") {
-                PopularRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") })
+                PopularRoute(onBlogClick = { blogId -> navController.navigate("blog/$blogId") { launchSingleTop = true } })
             }
             composable("library") {
                 LibraryRoute(
-                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
-                    onUserClick = { username -> navController.navigate("user/${android.net.Uri.encode(username)}") },
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") { launchSingleTop = true } },
+                    onUserClick = { username -> navController.navigate("user/${android.net.Uri.encode(username)}") { launchSingleTop = true } },
                     onLoginClick = { navController.navigate("login") },
                 )
             }
             composable("search") {
                 SearchRoute(
-                    onTagClick = { tag -> navController.navigate("tag/${android.net.Uri.encode(tag)}") },
-                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") { launchSingleTop = true } },
                 )
             }
             composable("settings") {
@@ -368,7 +414,7 @@ fun MainApp() {
                 arguments = listOf(navArgument("blogId") { type = NavType.IntType }),
             ) {
                 BlogDetailRoute(
-                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") { launchSingleTop = true } },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -377,16 +423,7 @@ fun MainApp() {
                 arguments = listOf(navArgument("username") { type = NavType.StringType }),
             ) {
                 UserDetailRoute(
-                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
-                    onBack = { navController.popBackStack() },
-                )
-            }
-            composable(
-                route = "tag/{tag}",
-                arguments = listOf(navArgument("tag") { type = NavType.StringType }),
-            ) {
-                TagDetailRoute(
-                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") },
+                    onBlogClick = { blogId -> navController.navigate("blog/$blogId") { launchSingleTop = true } },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -442,46 +479,58 @@ internal fun MiniPlayerBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(metrics.miniPlayerRowSpacing),
             ) {
-                AsyncImage(
-                    model = uiState.artworkUrl,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(metrics.miniPlayerArtSize)
-                        .clip(RoundedCornerShape(6.dp))
-                        .pressFeedback(pressedScale = 0.94f, label = "miniPlayerArtworkPress")
-                        .clickable(
-                            role = androidx.compose.ui.semantics.Role.Button,
-                            onClick = onOpenPlayer,
-                        ),
-                    contentScale = ContentScale.Crop,
-                )
-                Column(
+                val miniArtFallback = androidx.compose.ui.graphics.painter.ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
+                // Artwork and text share ONE tap target: two separately
+                // focusable "open player" buttons made TalkBack announce an
+                // unnamed image button before the title.
+                Row(
                     modifier = Modifier
                         .weight(1f)
-                        .pressFeedback(pressedScale = 0.985f, label = "miniPlayerTextPress")
+                        .pressFeedback(pressedScale = 0.985f, label = "miniPlayerOpenPress")
                         .clickable(
                             role = androidx.compose.ui.semantics.Role.Button,
+                            onClickLabel = stringResource(R.string.action_open_player),
                             onClick = onOpenPlayer,
                         ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(metrics.miniPlayerRowSpacing),
                 ) {
-                    Text(
-                        text = uiState.title,
-                        style = if (compactMode) {
-                            MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
-                        } else {
-                            MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color.White,
+                    AsyncImage(
+                        model = rememberSizedImageRequest(
+                            url = uiState.artworkUrl,
+                            width = metrics.miniPlayerArtSize,
+                            height = metrics.miniPlayerArtSize,
+                        ),
+                        contentDescription = null,
+                        placeholder = miniArtFallback,
+                        error = miniArtFallback,
+                        modifier = Modifier
+                            .size(metrics.miniPlayerArtSize)
+                            .clip(RoundedCornerShape(6.dp)),
+                        contentScale = ContentScale.Crop,
                     )
-                    Text(
-                        text = uiState.artist,
-                        style = if (compactMode) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = hypeTokens.chrome.miniPlayerArtist,
-                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            text = uiState.title,
+                            style = if (compactMode) {
+                                MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                            } else {
+                                MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = Color.White,
+                        )
+                        Text(
+                            text = uiState.artist,
+                            style = if (compactMode) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = hypeTokens.chrome.miniPlayerArtist,
+                        )
+                    }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(

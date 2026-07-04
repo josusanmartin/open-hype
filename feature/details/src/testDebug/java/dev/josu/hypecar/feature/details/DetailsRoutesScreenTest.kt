@@ -5,14 +5,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.lifecycle.SavedStateHandle
-import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.PopularMode
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
@@ -107,40 +104,6 @@ class DetailsRoutesScreenTest {
         composeRule.onNodeWithText("First fav").assertIsDisplayed()
     }
 
-    @Test
-    fun `TagDetailRoute renders the tag heading and forwards play`() {
-        var played: Int? = null
-        val catalog = ScriptedDetailsCatalog(
-            tagTracks = listOf(track("t1", "Tag track A"), track("t2", "Tag track B")),
-        )
-        val playback = DetailsScreenRecordingPlayback { tracks, idx -> played = idx }
-
-        composeRule.setContent {
-            HypeTheme {
-                Surface {
-                    TagDetailRoute(
-                        onBlogClick = {},
-                        viewModel = TagDetailViewModel(
-                            savedStateHandle = SavedStateHandle(mapOf("tag" to "techno")),
-                            catalogRepository = catalog,
-                            playbackRepository = playback,
-                        ),
-                    )
-                }
-            }
-        }
-
-        composeRule.waitUntil(timeoutMillis = 2_000) {
-            composeRule.onAllNodesWithText("Tag track A").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithText("#techno").assertIsDisplayed()
-        composeRule.onNodeWithText("Tagged cuts").assertIsDisplayed()
-
-        composeRule.onNodeWithText("Tag track B").performClick()
-        composeRule.waitUntil(timeoutMillis = 2_000) { played == 1 }
-        assertThat(played).isEqualTo(1)
-    }
-
     private fun track(id: String, title: String) = Track(
         id = id, artist = "x", title = title, lovedCount = 0,
         postedBy = "z", postedById = 0, postedCount = 0,
@@ -154,20 +117,17 @@ private class ScriptedDetailsCatalog(
     private val blogTracks: List<Track> = emptyList(),
     private val user: User? = null,
     private val userFavorites: List<Track> = emptyList(),
-    private val tagTracks: List<Track> = emptyList(),
 ) : CatalogRepository {
     override suspend fun blog(blogId: Int): Blog = blog ?: error("no blog scripted")
     override suspend fun blogTracks(blogId: Int, page: Int, count: Int): List<Track> = blogTracks
     override suspend fun user(username: String): User = user ?: error("no user scripted")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = userFavorites
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = tagTracks
 
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = error("not used")
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
 }
 
 private class DetailsScreenRecordingPlayback(

@@ -5,7 +5,7 @@
     <string name="catalog_action_favorite">Marcar pista como favorita</string>
     <string name="catalog_action_unfavorite">Quitar de favoritos</string>
     <string name="catalog_empty_default">Aún no hay nada aquí.</string>
-    <string name="catalog_latest_title">Reciente</string>
+    <string name="catalog_latest_title">Recientes</string>
     <string name="catalog_latest_subtitle">Descubre nuevos sonidos e historias</string>
     <string name="catalog_popular_title">Popular</string>
     <string name="catalog_popular_subtitle">Escucha lo que está subiendo ahora mismo</string>
@@ -17,4 +17,10 @@
         <item quantity="one">%1$d le encanta · reposteado %2$dx</item>
         <item quantity="other">%1$d le encantan · reposteado %2$dx</item>
     </plurals>
+    <string name="catalog_mode_all">Todo</string>
+    <string name="catalog_mode_freshest">Lo más fresco</string>
+    <string name="catalog_mode_no_remixes">Sin remezclas</string>
+    <string name="catalog_mode_only_remixes">Solo remezclas</string>
+    <string name="catalog_mode_now">Ahora</string>
+    <string name="catalog_mode_last_week">Última semana</string>
 </resources>

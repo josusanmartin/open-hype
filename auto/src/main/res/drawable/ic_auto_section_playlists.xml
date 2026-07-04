@@ -3,11 +3,8 @@
     android:height="96dp"
     android:viewportWidth="96"
     android:viewportHeight="96">
-    <!-- Playlists: stacked queue lines + play arrow. -->
+    <!-- Playlists: transparent glyph so car hosts cannot tint it into a solid square. -->
     <path
-        android:fillColor="#FFDFC7A6"
-        android:pathData="M0,0h96v96h-96z" />
-    <path
-        android:fillColor="#FF3A271C"
+        android:fillColor="#FFFF8A3D"
         android:pathData="M14,28 L62,28 L62,36 L14,36 Z M14,44 L62,44 L62,52 L14,52 Z M14,60 L48,60 L48,68 L14,68 Z M68,46 L84,56 L68,66 Z" />
 </vector>

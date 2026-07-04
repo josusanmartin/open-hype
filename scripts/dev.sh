@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Common dev shortcuts. Run from repo root.
 #
-#   scripts/dev.sh check       # the same gates CI runs (fast-fail)
+#   scripts/dev.sh check       # fast subset of the CI gates (fast-fail)
 #   scripts/dev.sh ci          # full test/lint/coverage pipeline locally
 #   scripts/dev.sh format      # spotlessApply
 #   scripts/dev.sh coverage    # generate Kover HTML and print a one-line summary

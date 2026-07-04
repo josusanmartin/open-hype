@@ -21,10 +21,8 @@
     <string name="player_progress_label">Playback position</string>
     <string name="player_error_skipped">Couldn\'t play that track. Skipping.</string>
     <string name="player_error_stopped">Couldn\'t play that track.</string>
+    <string name="player_error_favorite">Couldn\'t update favorite. Check your connection.</string>
     <string name="player_error_dismiss">Dismiss</string>
-    <string name="player_top_bar_title">Now Playing</string>
-    <string name="player_more_actions">More actions</string>
     <string name="player_up_next">Up next</string>
-    <string name="player_queue_empty">Queue is empty.</string>
     <string name="player_track_in_queue_a11y">%1$s by %2$s. Tap to play.</string>
 </resources>

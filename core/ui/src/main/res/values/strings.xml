@@ -3,4 +3,9 @@
     <string name="connectivity_banner_offline">You\'re offline — showing cached data.</string>
     <string name="connectivity_banner_limited">Limited connection — some content may be stale.</string>
     <string name="skeleton_loading">Loading</string>
+
+    <string name="error_network">Can\'t reach the server. Check your connection and try again.</string>
+    <string name="error_session_expired">Your session has expired. Please log in again.</string>
+    <string name="error_server">The server is having trouble right now. Try again shortly.</string>
+    <string name="error_generic">Something went wrong. Try again.</string>
 </resources>

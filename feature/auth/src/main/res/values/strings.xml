@@ -7,4 +7,6 @@
     <string name="auth_password_hide">Hide</string>
     <string name="auth_button_login">Log in</string>
     <string name="auth_error_generic">Login failed.</string>
+    <string name="auth_error_invalid_credentials">Username or password is incorrect.</string>
+    <string name="auth_watermark" translatable="false">offline\nrotation\nsynced</string>
 </resources>

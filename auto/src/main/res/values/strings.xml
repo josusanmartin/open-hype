@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Top-level browse sections shown on the Android Auto HUD. -->
-    <string name="auto_root_title">Hype</string>
+    <string name="auto_root_title" translatable="false">Hype</string>
     <string name="auto_section_latest_title">Latest</string>
     <string name="auto_section_latest_subtitle">Newest blog posts</string>
     <string name="auto_section_popular_title">Popular</string>

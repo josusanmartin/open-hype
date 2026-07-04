@@ -2,7 +2,38 @@
 
 All notable changes are recorded here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project does not yet semver-tag deps internally so all versions stay in the `0.x` lane.
 
-Pre-built artifacts for each release ship in `dist/<version>/`.
+Release artifacts are published on [GitHub Releases](https://github.com/josusanmartin/open-hype/releases); `scripts/dev.sh release` stages the same files locally under `dist/<version>/` (gitignored).
+
+## [0.32.0] — 2026-07-04
+
+Audit-fix pass across the whole codebase (from a full code/UI/UX/QA/infra audit):
+
+- **Breathing player background restored.** The 0.25.0 warm radial glow and bottom haze animate again on the phone player (5.5 s / 7 s offset cycles); they only run while the player screen is open.
+
+- **Favorites pipeline rebuilt end-to-end.** Phone-queued tracks now carry `is_loved`, the Android Auto heart no longer un-loves loved tracks, the toggle continuation runs on the correct thread (it previously threw on every tap), `toggleFavorite` invalidates cached favorites lists, pull-to-refresh bypasses the 5-minute list cache, and `FavoriteSyncManager` is the single bus keeping list screens, the player, the mini player, and the car session in step.
+- **Privacy/data hygiene:** authenticated API responses are `no-store` (the session token no longer lands in the OkHttp disk cache), and logout wipes Room caches, listening history, offline downloads, and the HTTP cache.
+- **Offline sync:** cancelled syncs no longer leave the Sync button stuck on "Syncing…", orphaned audio files are swept at sync start, an exactly-full quota no longer freezes eviction, quota changes/clear no longer race a running sync, and downloads drop the 25 s call timeout (big tracks can finish).
+- **Player:** swipe gestures regained touch slop + axis locking (taps stop dying on the transport deck, swipe-down-to-dismiss works over the artwork), swiping past the last track no longer blanks the screen, error snackbars auto-dismiss, the scrubber works in RTL, and up-next taps seek within the queue instead of rebuilding it.
+- **Android Auto:** Assistant voice search works ("Play X on Hype Machine"), playback resumption after process death is implemented, browse artwork is cached (no more re-downloads per visit), tap-to-queue survives host page sizes, playlists paginate, the phone notification shows the heart, root content-style hints reach legacy hosts, and only trusted controllers may toggle favorites.
+- **UX/a11y:** mini player stays visible on detail screens, system bar icons match the surfaces beneath them (with a dark cold-start window), hearts meet the 48 dp touch minimum on phone, failed page loads show an inline Retry, errors over content surface as snackbars, logout asks for confirmation, detail screens can retry and the user profile gained its back arrow, Settings scrolls in landscape, and the search field submits from the keyboard.
+- **Localization:** all error copy and filter chips now come from string resources (Spanish included) instead of hardcoded English; assorted plural/quote/terminology fixes.
+- **Infra:** CI runs an unsigned R8 smoke on every PR, actions are SHA-pinned with wrapper validation, a tag-triggered release workflow publishes GitHub Releases, `./gradlew build` no longer fails without signing credentials, release builds strip chatty logging, and Robolectric runs at 4.14.
+- **Removed:** the unreachable tag-browsing chain (route, screen, repository + API surface) left orphaned when search dropped its tag chips.
+
+## [0.22.0] – [0.31.0] (consolidated)
+
+Recorded retroactively — these shipped as tags v0.28.0–v0.31.0 (the repo went public at 0.28.0).
+
+- **0.22.0** — test fixture repair after VM signature changes; Spanish strings for the new player chrome.
+- **0.23.0** — QA pass on the 0.21.0 features: pull-to-refresh no longer leaves `loadingMore` stuck, pagination survives a failed page, dead scroll-to-top flows removed; pagination unit tests added across Latest/Popular/Library.
+- **0.24.0** — player lint cleanup and screen tests for the redesigned top bar; `ScrollToTopBus` unit tests.
+- **0.25.0** — plurals migration for blog follower/track counts; soft animated player background (later made static in the interest of battery).
+- **0.26.0** — visual QA on AAOS + Pixel emulators: car snackbar no longer covers the play button; Library hero sized for the 600 dp landscape viewport.
+- **0.27.0** — phone Settings respects the status-bar inset; tighter car catalog so two cards fit.
+- **0.28.0** — initial public push at github.com/josusanmartin/open-hype; README screenshot gallery; unused deps dropped.
+- **0.29.0** — real Android Auto QA via the templated Media surface; signed-out sections show a clean placeholder; favorite heart custom command in the car transport row.
+- **0.30.0** — heart pinned to the overflow slot so skip-next stays visible on real cars.
+- **0.31.0** — high-res AAOS screenshots; custom OkHttp `BitmapLoader` so artwork loads on stripped trust stores.
 
 ## [0.21.0]
 

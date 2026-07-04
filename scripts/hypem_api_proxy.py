@@ -57,7 +57,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 payload = response.read()
                 self.send_response(response.status)
                 for name, value in response.headers.items():
-                    if name.lower() not in HOP_BY_HOP:
+                    if name.lower() not in HOP_BY_HOP and name.lower() != "content-length":
                         self.send_header(name, value)
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -66,7 +66,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             payload = error.read()
             self.send_response(error.code)
             for name, value in error.headers.items():
-                if name.lower() not in HOP_BY_HOP:
+                if name.lower() not in HOP_BY_HOP and name.lower() != "content-length":
                     self.send_header(name, value)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -77,9 +77,9 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    with socketserver.ThreadingTCPServer(("0.0.0.0", 8787), ProxyHandler) as server:
+    with socketserver.ThreadingTCPServer(("127.0.0.1", 8787), ProxyHandler) as server:
         server.daemon_threads = True
-        print("Hype API proxy listening on http://0.0.0.0:8787")
+        print("Hype API proxy listening on http://127.0.0.1:8787 (AAOS emulator reaches it via 10.0.2.2)")
         server.serve_forever()
 
 

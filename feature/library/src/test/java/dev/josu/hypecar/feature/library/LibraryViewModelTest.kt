@@ -106,7 +106,7 @@ class LibraryViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.loading).isFalse()
-        assertThat(vm.state.value.error).isEqualTo("boom")
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Unknown)
     }
 
     @Test
@@ -172,7 +172,7 @@ class LibraryViewModelTest {
         itunesUrl = "",
     )
 
-    private fun favoriteSyncManager(meRepository: MeRepository) = FavoriteSyncManager(meRepository)
+    private fun favoriteSyncManager(meRepository: MeRepository) = FavoriteSyncManager(meRepository, NoOpPlaybackRepository)
 }
 
 private class StubAuthRepository(private val sessionFlow: MutableStateFlow<AuthSession?>) : AuthRepository {
@@ -194,7 +194,7 @@ private class ScriptedMeRepository(
         private set
     val favoritesPageCalls = mutableListOf<Int>()
 
-    override suspend fun favorites(page: Int, count: Int): List<Track> {
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> {
         favoritesCalls += 1
         favoritesPageCalls += page
         favoritesPages?.get(page)?.let { return it.getOrThrow() }
@@ -203,8 +203,8 @@ private class ScriptedMeRepository(
     }
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = feed
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = feed
     override suspend fun history(page: Int, count: Int): List<Track> = history
 }
 

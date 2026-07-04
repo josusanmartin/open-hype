@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.josu.hypecar.core.model.UiErrorKind
+import dev.josu.hypecar.core.ui.errorLabel
 import dev.josu.hypecar.core.ui.pressFeedback
 
 @Composable
@@ -149,9 +151,13 @@ fun LoginRoute(
                 shape = RoundedCornerShape(14.dp),
                 colors = loginTextFieldColors(),
             )
-            state.error?.let {
+            state.error?.let { kind ->
                 Text(
-                    text = it,
+                    text = when (kind) {
+                        UiErrorKind.InvalidCredentials -> stringResource(R.string.auth_error_invalid_credentials)
+                        UiErrorKind.Unknown -> stringResource(R.string.auth_error_generic)
+                        else -> kind.errorLabel()
+                    },
                     color = Color(0xFFB3261E),
                     style = MaterialTheme.typography.bodyMedium,
                 )
@@ -270,7 +276,7 @@ private fun LoginBackgroundArt() {
                     .background(Color(0x33FFFFFF)),
             )
             Text(
-                text = "offline\nrotation\nsynced",
+                text = stringResource(R.string.auth_watermark),
                 color = Color(0x33FFFFFF),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier

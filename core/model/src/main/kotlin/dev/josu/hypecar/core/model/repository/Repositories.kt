@@ -9,7 +9,6 @@ import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.SearchQuery
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import kotlinx.coroutines.flow.Flow
@@ -24,9 +23,10 @@ interface AuthRepository {
 }
 
 interface CatalogRepository {
-    suspend fun latest(mode: LatestMode = LatestMode.ALL, page: Int = 1, count: Int = 20): List<Track>
+    /** [forceRefresh] bypasses the short-lived list cache — used by explicit refresh gestures. */
+    suspend fun latest(mode: LatestMode = LatestMode.ALL, page: Int = 1, count: Int = 20, forceRefresh: Boolean = false): List<Track>
 
-    suspend fun popular(mode: PopularMode = PopularMode.NOW, page: Int = 1, count: Int = 20): List<Track>
+    suspend fun popular(mode: PopularMode = PopularMode.NOW, page: Int = 1, count: Int = 20, forceRefresh: Boolean = false): List<Track>
 
     suspend fun track(trackId: String): Track
 
@@ -41,23 +41,23 @@ interface CatalogRepository {
     suspend fun userFavorites(username: String, page: Int = 1, count: Int = 20): List<Track>
 
     suspend fun userFriends(username: String, page: Int = 1, count: Int = 20): List<User>
-
-    suspend fun tags(): List<Tag>
-
-    suspend fun tagTracks(tag: String, page: Int = 1, count: Int = 20): List<Track>
 }
 
 interface MeRepository {
-    suspend fun favorites(page: Int = 1, count: Int = 20): List<Track>
+    /** [forceRefresh] bypasses the short-lived list cache — used by explicit refresh gestures and offline sync. */
+    suspend fun favorites(page: Int = 1, count: Int = 20, forceRefresh: Boolean = false): List<Track>
 
-    /** Returns the final loved state after the toggle, or null when the request failed. */
+    /**
+     * Returns the final loved state after the toggle, or null when the request failed.
+     * Implementations must invalidate any cached favorites lists on success.
+     */
     suspend fun toggleFavorite(trackId: String): Boolean?
 
     suspend fun playlistNames(): List<Playlist>
 
-    suspend fun playlist(playlistId: Int, page: Int = 1, count: Int = 20): List<Track>
+    suspend fun playlist(playlistId: Int, page: Int = 1, count: Int = 20, forceRefresh: Boolean = false): List<Track>
 
-    suspend fun feed(mode: FeedMode = FeedMode.ALL, page: Int = 1, count: Int = 20): List<FeedItem>
+    suspend fun feed(mode: FeedMode = FeedMode.ALL, page: Int = 1, count: Int = 20, forceRefresh: Boolean = false): List<FeedItem>
 
     suspend fun history(page: Int = 1, count: Int = 20): List<Track>
 }
@@ -84,6 +84,13 @@ interface PlaybackRepository {
     suspend fun skipPrevious()
 
     suspend fun seekTo(positionMs: Long)
+
+    /**
+     * Jump to a specific queue item without rebuilding the queue (preserves
+     * shuffle order and playback history position). Default no-op so fakes
+     * only override it when they care.
+     */
+    suspend fun seekToQueueItem(index: Int) {}
 
     suspend fun toggleShuffle()
 

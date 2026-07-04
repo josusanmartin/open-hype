@@ -75,7 +75,10 @@ subprojects {
             ktlint("1.3.0")
         }
         format("misc") {
-            target("**/*.md", "**/.gitignore")
+            // Scoped so the file walk never descends into build/ — a `**` glob
+            // walks generated dirs before excludes apply, which races KSP
+            // output under parallel execution ("Could not read path …/kspCaches").
+            target("*.md", "src/**/*.md", ".gitignore")
             targetExclude("**/build/**", "**/.gradle/**")
             trimTrailingWhitespace()
             endWithNewline()

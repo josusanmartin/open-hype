@@ -27,9 +27,13 @@ object HypeMediaIds {
 
     fun track(id: String): String = "track:$id"
 
-    fun track(id: String, sourceId: String, sourcePage: Int = 0): String {
+    fun track(id: String, sourceId: String, sourcePage: Int = 0, sourcePageSize: Int = 0): String {
         val base = "${track(id)}?src=${sourceId.urlEncode()}"
-        return if (sourcePage > 0) "$base&pg=$sourcePage" else base
+        val withPage = if (sourcePage > 0) "$base&pg=$sourcePage" else base
+        // The page size the host browsed with must ride along: rebuilding the
+        // queue with a different size shifts the page boundaries and the
+        // tapped track is no longer on "its" page.
+        return if (sourcePageSize > 0) "$withPage&ps=$sourcePageSize" else withPage
     }
 
     fun search(query: String): String = "search:${query.urlEncode()}"
@@ -58,6 +62,18 @@ object HypeMediaIds {
         return params.split("&")
             .firstOrNull { it.startsWith("pg=") }
             ?.removePrefix("pg=")
+            ?.toIntOrNull()
+            ?.coerceAtLeast(0)
+            ?: 0
+    }
+
+    /** Page size the source section was browsed with, or 0 when unknown. */
+    fun parseTrackSourcePageSize(mediaId: String): Int {
+        if (!mediaId.contains("?")) return 0
+        val params = mediaId.substringAfter("?")
+        return params.split("&")
+            .firstOrNull { it.startsWith("ps=") }
+            ?.removePrefix("ps=")
             ?.toIntOrNull()
             ?.coerceAtLeast(0)
             ?: 0

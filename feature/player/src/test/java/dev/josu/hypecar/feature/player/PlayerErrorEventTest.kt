@@ -40,7 +40,7 @@ class PlayerErrorEventTest {
         val playback = ErrorTrackingPlayback().apply {
             emitError(PlaybackErrorEvent(eventId = 7, trackId = "abc", recoverable = true))
         }
-        val vm = PlayerViewModel(playback, NoOpMeRepository)
+        val vm = newPlayerViewModel(playback, NoOpMeRepository)
 
         vm.acknowledgePlaybackError(7)
         advanceUntilIdle()
@@ -54,7 +54,7 @@ class PlayerErrorEventTest {
         val playback = ErrorTrackingPlayback().apply {
             emitError(PlaybackErrorEvent(eventId = 9, trackId = "xyz", recoverable = false))
         }
-        val vm = PlayerViewModel(playback, NoOpMeRepository)
+        val vm = newPlayerViewModel(playback, NoOpMeRepository)
 
         vm.acknowledgePlaybackError(7) // stale id; current is 9
         advanceUntilIdle()
@@ -92,11 +92,11 @@ private class ErrorTrackingPlayback : PlaybackRepository {
 }
 
 private object NoOpMeRepository : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
@@ -112,4 +112,10 @@ private val sampleTrack = Track(
     datePostedEpochSeconds = 0L,
     postUrl = "",
     itunesUrl = "",
+)
+
+private fun newPlayerViewModel(playback: PlaybackRepository, me: MeRepository) = PlayerViewModel(
+    playbackRepository = playback,
+    meRepository = me,
+    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(me, playback),
 )

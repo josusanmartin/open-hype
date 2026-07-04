@@ -2,7 +2,6 @@ package dev.josu.hypecar.core.network.dto
 
 import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.Blog
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.TrackThumbnails
 import dev.josu.hypecar.core.model.User
@@ -59,9 +58,4 @@ fun UserDto.toModel(): User = User(
     followingCount = favoritesCount?.user ?: 0,
     isFriend = isFriend,
     isFollower = isFollower,
-)
-
-fun TagDto.toModel(): Tag = Tag(
-    name = name,
-    priority = priority,
 )

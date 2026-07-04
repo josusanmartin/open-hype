@@ -6,7 +6,6 @@ import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.PopularMode
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
@@ -81,7 +80,7 @@ class PopularViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.loading).isFalse()
-        assertThat(vm.state.value.error).isEqualTo("offline")
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Network)
     }
 
     @Test
@@ -140,7 +139,7 @@ private class ScriptedPopularCatalog(
     val popularCalls = mutableListOf<PopularMode>()
     val popularPageCalls = mutableListOf<Int>()
 
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> {
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> {
         popularCalls += mode
         popularPageCalls += page
         popularPages?.get(page)?.let { return it.getOrThrow() }
@@ -148,7 +147,7 @@ private class ScriptedPopularCatalog(
         return popular
     }
 
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = error("not used")
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun blog(blogId: Int): Blog = error("not used")
@@ -156,8 +155,6 @@ private class ScriptedPopularCatalog(
     override suspend fun user(username: String): User = error("not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object NoOpPlayback : PlaybackRepository {
@@ -173,13 +170,13 @@ private object NoOpPlayback : PlaybackRepository {
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
 }
 
-private fun popularFavoriteSync() = FavoriteSyncManager(PopularNoOpMe)
+private fun popularFavoriteSync() = FavoriteSyncManager(PopularNoOpMe, NoOpPlayback)
 
 private object PopularNoOpMe : dev.josu.hypecar.core.model.repository.MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<dev.josu.hypecar.core.model.Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<dev.josu.hypecar.core.model.Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<dev.josu.hypecar.core.model.Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<dev.josu.hypecar.core.model.Track> = emptyList()
-    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int): List<dev.josu.hypecar.core.model.FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<dev.josu.hypecar.core.model.Track> = emptyList()
+    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<dev.josu.hypecar.core.model.FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<dev.josu.hypecar.core.model.Track> = emptyList()
 }

@@ -89,4 +89,30 @@ class OfflineDownloadPlannerTest {
         assertThat(accumulator.recordDownloaded(tooBig)).isNull()
         assertThat(accumulator.contains("new")).isFalse()
     }
+
+    @Test
+    fun `record persist batcher only flushes after the configured batch size`() {
+        val batcher = OfflineRecordPersistBatcher(batchSize = 3)
+
+        assertThat(batcher.recordDownloaded()).isFalse()
+        assertThat(batcher.recordDownloaded()).isFalse()
+        assertThat(batcher.recordDownloaded()).isTrue()
+
+        batcher.markPersisted()
+        assertThat(batcher.hasPendingWrites).isFalse()
+        assertThat(batcher.recordDownloaded()).isFalse()
+    }
+
+    @Test
+    fun `record persist batcher keeps records pending until a save is confirmed`() {
+        val batcher = OfflineRecordPersistBatcher(batchSize = 2)
+
+        assertThat(batcher.recordDownloaded()).isFalse()
+        assertThat(batcher.recordDownloaded()).isTrue()
+
+        // The save failed (markPersisted never called): the batch stays
+        // pending so the final NonCancellable flush still covers it.
+        assertThat(batcher.hasPendingWrites).isTrue()
+        assertThat(batcher.recordDownloaded()).isTrue()
+    }
 }

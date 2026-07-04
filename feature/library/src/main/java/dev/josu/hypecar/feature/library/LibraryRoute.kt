@@ -28,6 +28,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,10 +42,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.repository.AuthRepository
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
@@ -72,10 +75,11 @@ data class LibraryUiState(
     val tracks: List<Track> = emptyList(),
     val loading: Boolean = true,
     val refreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiErrorKind? = null,
     val nextPage: Int = 2,
     val hasMore: Boolean = true,
     val loadingMore: Boolean = false,
+    val loadMoreFailed: Boolean = false,
 )
 
 @HiltViewModel
@@ -165,10 +169,11 @@ class LibraryViewModel @Inject constructor(
                             nextPage = latest.nextPage + 1,
                             hasMore = fresh.size >= 30,
                             loadingMore = false,
+                            loadMoreFailed = false,
                         )
                     },
                     // Keep hasMore=true so a transient blip can be retried by scrolling again.
-                    onFailure = { latest.copy(loadingMore = false) },
+                    onFailure = { latest.copy(loadingMore = false, loadMoreFailed = true) },
                 )
             }
         }
@@ -184,8 +189,9 @@ class LibraryViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     loading = !viaPull && it.tracks.isEmpty(),
-                    refreshing = viaPull,
+                    refreshing = viaPull || it.tracks.isNotEmpty(),
                     loadingMore = false,
+                    loadMoreFailed = false,
                     error = null,
                 )
             }
@@ -195,7 +201,7 @@ class LibraryViewModel @Inject constructor(
                         if (request.session == null) {
                             request.copy(loading = false, tracks = emptyList())
                         } else {
-                            request.copy(loading = false, tracks = meRepository.favorites(count = 30))
+                            request.copy(loading = false, tracks = meRepository.favorites(count = 30, forceRefresh = viaPull))
                         }
                     }
 
@@ -205,7 +211,7 @@ class LibraryViewModel @Inject constructor(
                         } else {
                             request.copy(
                                 loading = false,
-                                tracks = meRepository.feed(count = 30).map(FeedItem::track),
+                                tracks = meRepository.feed(count = 30, forceRefresh = viaPull).map(FeedItem::track),
                             )
                         }
                     }
@@ -220,7 +226,7 @@ class LibraryViewModel @Inject constructor(
                                 loading = false,
                                 playlists = playlists,
                                 selectedPlaylistId = selected,
-                                tracks = if (selected != null) meRepository.playlist(selected, count = 30) else emptyList(),
+                                tracks = if (selected != null) meRepository.playlist(selected, count = 30, forceRefresh = viaPull) else emptyList(),
                             )
                         }
                     }
@@ -252,7 +258,7 @@ class LibraryViewModel @Inject constructor(
                             request.copy(
                                 loading = false,
                                 refreshing = false,
-                                error = it.message,
+                                error = it.toUiErrorKind(),
                             )
                         },
                     )
@@ -272,6 +278,27 @@ fun LibraryRoute(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val isAutomotive = rememberIsAutomotiveUi()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    var showLogoutConfirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (showLogoutConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showLogoutConfirm = false },
+            title = { Text(stringResource(R.string.library_logout_confirm_title)) },
+            text = { Text(stringResource(R.string.library_logout_confirm_message)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showLogoutConfirm = false
+                        viewModel.logout()
+                    },
+                ) { Text(stringResource(R.string.library_logout_button)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showLogoutConfirm = false }) {
+                    Text(stringResource(R.string.library_logout_cancel))
+                }
+            },
+        )
+    }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         dev.josu.hypecar.core.model.ScrollToTopBus.events.collect { route ->
             if (route == "library") listState.animateScrollToItem(0)
@@ -353,7 +380,9 @@ fun LibraryRoute(
                         session = session,
                         selectedTab = state.selectedTab,
                         onProfileClick = { onUserClick(session.username) },
-                        onLogoutClick = viewModel::logout,
+                        // Logout is destructive (clears the account's local data);
+                        // a single mis-tap on a small icon must not trigger it.
+                        onLogoutClick = { showLogoutConfirm = true },
                         compactMode = isAutomotive,
                     )
                 }
@@ -372,6 +401,7 @@ fun LibraryRoute(
         onToggleFavorite = viewModel::toggleFavorite,
         onLoadMore = viewModel::loadMore,
         hasMore = state.hasMore,
+        loadMoreFailed = state.loadMoreFailed,
         onRefresh = viewModel::pullToRefresh,
         isRefreshing = state.refreshing,
         listState = listState,
@@ -391,14 +421,16 @@ private fun LibraryProfileStrip(
     val avatarSize = if (compactMode) 32.dp else 40.dp
     val rowSpacing = if (compactMode) 8.dp else 12.dp
     val buttonSize = if (compactMode) 30.dp else 36.dp
+    val primaryTextColor = hypeTokens.cards.onSurface
+    val secondaryTextColor = hypeTokens.cards.onSurfaceMuted
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = outerPadding, vertical = outerPadding),
         color = hypeTokens.cards.surfaceAlt,
-        contentColor = Color.White,
+        contentColor = primaryTextColor,
         shape = profileShape,
-        border = BorderStroke(1.dp, Color(0xFF362823)),
+        border = BorderStroke(1.dp, hypeTokens.cards.border),
     ) {
         Row(
             modifier = Modifier
@@ -422,11 +454,14 @@ private fun LibraryProfileStrip(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = session.username,
+                    color = primaryTextColor,
                     style = if (compactMode) {
                         MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
                     } else {
                         MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                     },
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
                 // Subtitle uses a per-tab string resource so translations and
                 // future copy edits don't require touching Kotlin.
@@ -438,7 +473,7 @@ private fun LibraryProfileStrip(
                 }
                 Text(
                     text = stringResource(subtitleRes, session.username),
-                    style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFE2D4C6)),
+                    style = MaterialTheme.typography.bodyMedium.copy(color = secondaryTextColor),
                     maxLines = if (compactMode) 1 else 2,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = if (compactMode) 2.dp else 4.dp),

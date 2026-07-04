@@ -1,8 +1,10 @@
 package dev.josu.hypecar.core.playback
 
 import android.content.Context
+import androidx.media3.common.Player
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.model.MediaItemExtras
 import dev.josu.hypecar.core.model.PlaybackRepeatMode
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.HistoryRepository
@@ -57,6 +59,18 @@ class HypePlaybackManagerTest {
             }
         }
         assertThat(queue.items.map { it.track.id }).containsExactly("a", "b").inOrder()
+    }
+
+    @Test
+    fun `queued media items carry the loved state for the auto session`() = runBlocking {
+        val manager = newManager()
+        manager.play(listOf(track("a", "Alpha", isLoved = true)))
+        ShadowLooper.idleMainLooper()
+
+        val extras = manager.player.getMediaItemAt(0).mediaMetadata.extras
+
+        assertThat(extras).isNotNull()
+        assertThat(extras!!.getBoolean(MediaItemExtras.IsLoved)).isTrue()
     }
 
     @Test
@@ -117,6 +131,19 @@ class HypePlaybackManagerTest {
         manager.toggleShuffle()
         ShadowLooper.idleMainLooper()
         assertThat(manager.queue.value.isShuffleEnabled).isFalse()
+    }
+
+    @Test
+    fun `event policy only fully republishes queue for structural playback changes`() {
+        assertThat(
+            shouldPublishFullQueueForPlayerEvents(setOf(Player.EVENT_TIMELINE_CHANGED)::contains),
+        ).isTrue()
+        assertThat(
+            shouldPublishFullQueueForPlayerEvents(setOf(Player.EVENT_MEDIA_ITEM_TRANSITION)::contains),
+        ).isTrue()
+        assertThat(
+            shouldPublishFullQueueForPlayerEvents(setOf(Player.EVENT_AVAILABLE_COMMANDS_CHANGED)::contains),
+        ).isFalse()
     }
 
     @Test

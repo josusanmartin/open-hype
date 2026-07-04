@@ -11,6 +11,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.CatalogRepository
@@ -86,10 +87,11 @@ class PopularViewModel @Inject constructor(
                             nextPage = latest.nextPage + 1,
                             hasMore = fresh.size >= 30,
                             loadingMore = false,
+                            loadMoreFailed = false,
                         )
                     },
                     onFailure = {
-                        latest.copy(loadingMore = false)
+                        latest.copy(loadingMore = false, loadMoreFailed = true)
                     },
                 )
             }
@@ -105,13 +107,16 @@ class PopularViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     loading = !viaPull && it.tracks.isEmpty(),
-                    refreshing = viaPull,
+                    // Switching chips over existing content shows the refresh
+                    // indicator too — a silent 2s freeze reads as a dead tap.
+                    refreshing = viaPull || it.tracks.isNotEmpty(),
                     loadingMore = false,
+                    loadMoreFailed = false,
                     error = null,
                 )
             }
             val result = runSuspendCatchingPreservingCancellation {
-                catalogRepository.popular(mode = mode, page = 1, count = 30)
+                catalogRepository.popular(mode = mode, page = 1, count = 30, forceRefresh = viaPull)
             }
             _state.update { current ->
                 if (current.selectedIndex != selectedIndex) {
@@ -132,7 +137,7 @@ class PopularViewModel @Inject constructor(
                             current.copy(
                                 loading = false,
                                 refreshing = false,
-                                error = it.message,
+                                error = it.toUiErrorKind(),
                             )
                         },
                     )
@@ -160,7 +165,7 @@ fun PopularRoute(
         tracks = state.tracks,
         isLoading = state.loading,
         error = state.error,
-        chips = PopularMode.entries.map { it.displayLabel },
+        chips = PopularMode.entries.map { popularModeLabel(it) },
         selectedChipIndex = state.selectedIndex,
         onChipSelected = viewModel::selectMode,
         onTrackClick = viewModel::play,
@@ -171,8 +176,19 @@ fun PopularRoute(
         onRetry = viewModel::pullToRefresh,
         onLoadMore = viewModel::loadMore,
         hasMore = state.hasMore,
+        loadMoreFailed = state.loadMoreFailed,
         onRefresh = viewModel::pullToRefresh,
         isRefreshing = state.refreshing,
         listState = listState,
     )
 }
+
+@Composable
+private fun popularModeLabel(mode: PopularMode): String = stringResource(
+    when (mode) {
+        PopularMode.NOW -> R.string.catalog_mode_now
+        PopularMode.NO_REMIXES -> R.string.catalog_mode_no_remixes
+        PopularMode.ONLY_REMIXES -> R.string.catalog_mode_only_remixes
+        PopularMode.LAST_WEEK -> R.string.catalog_mode_last_week
+    },
+)

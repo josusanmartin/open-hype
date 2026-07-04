@@ -21,11 +21,9 @@
     <string name="player_progress_label">Posición de reproducción</string>
     <string name="player_error_skipped">No se pudo reproducir esa pista. Saltando.</string>
     <string name="player_error_stopped">No se pudo reproducir esa pista.</string>
+    <string name="player_error_favorite">No se pudo actualizar el favorito. Revisa la conexión.</string>
     <string name="player_error_dismiss">Descartar</string>
 
-    <string name="player_top_bar_title">Reproduciendo</string>
-    <string name="player_more_actions">Más acciones</string>
     <string name="player_up_next">A continuación</string>
-    <string name="player_queue_empty">La cola está vacía.</string>
     <string name="player_track_in_queue_a11y">%1$s de %2$s. Tocar para reproducir.</string>
 </resources>

@@ -48,4 +48,4 @@ These need infrastructure beyond JVM unit tests / Robolectric.
 
 - **`HypePlaybackManager` is `@Singleton`** but never released. Acceptable for app-lifetime singletons, but a future change to make it scope-aware should release the underlying ExoPlayer.
 - **`MediaNotificationPermissionGate`** is a `private fun` Composable in MainActivity. Robolectric / screen-test-able if widened to `internal` (same trick as `MiniPlayerBar` in [0.15.0](CHANGELOG.md)).
-- **`tmp/` and `dist/`** are in the working tree. `tmp/` is now gitignored; `dist/` is intentionally tracked (versioned artifact mirror) but eats ~100 MB of repo size. Long-term, these should move to GitHub Releases.
+- **`tmp/` and `dist/`** are both gitignored now; release artifacts live on GitHub Releases (tag-triggered workflow) and `scripts/dev.sh release` stages local copies on demand.

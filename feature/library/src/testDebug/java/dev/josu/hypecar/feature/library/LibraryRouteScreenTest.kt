@@ -48,7 +48,7 @@ class LibraryRouteScreenTest {
                             authRepository = SignedOutAuth(),
                             meRepository = EmptyMe,
                             playbackRepository = NoOpPlayback,
-                            favoriteSyncManager = FavoriteSyncManager(EmptyMe),
+                            favoriteSyncManager = FavoriteSyncManager(EmptyMe, NoOpPlayback),
                         ),
                     )
                 }
@@ -77,7 +77,7 @@ class LibraryRouteScreenTest {
                             authRepository = SignedInAuth(),
                             meRepository = me,
                             playbackRepository = NoOpPlayback,
-                            favoriteSyncManager = FavoriteSyncManager(me),
+                            favoriteSyncManager = FavoriteSyncManager(me, NoOpPlayback),
                         ),
                     )
                 }
@@ -114,21 +114,21 @@ private class SignedInAuth : AuthRepository {
 private class StaticMe(
     private val favorites: List<Track> = emptyList(),
 ) : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> =
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> =
         if (page == 1) favorites else emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object EmptyMe : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 

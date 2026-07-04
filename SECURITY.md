@@ -9,7 +9,7 @@ Please do not open a public GitHub issue for security reports. Use one of:
 
 Include:
 
-- The version (`dist/<version>/` or `versionName` if you built from source).
+- The version (the `v…` footer on the Settings screen, the GitHub Release you installed, or `versionName` if you built from source).
 - A clear description of the issue and the impact you observed.
 - A minimal reproduction (steps, sample input, or a small patch demonstrating the flaw).
 - Any logs, screenshots, or stack traces that help.

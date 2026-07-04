@@ -2,7 +2,6 @@ package dev.josu.hypecar.core.network
 
 import dev.josu.hypecar.core.network.dto.BlogDto
 import dev.josu.hypecar.core.network.dto.GetTokenResponseDto
-import dev.josu.hypecar.core.network.dto.TagDto
 import dev.josu.hypecar.core.network.dto.TrackDto
 import dev.josu.hypecar.core.network.dto.UserDto
 import okhttp3.ResponseBody
@@ -103,13 +102,4 @@ interface HypeApiService {
         @Path("username") username: String,
         @QueryMap params: Map<String, String>,
     ): List<UserDto>
-
-    @GET("tags")
-    suspend fun tags(): List<TagDto>
-
-    @GET("tags/{tagName}/tracks")
-    suspend fun tagTracks(
-        @Path("tagName") tagName: String,
-        @QueryMap params: Map<String, String>,
-    ): List<TrackDto>
 }

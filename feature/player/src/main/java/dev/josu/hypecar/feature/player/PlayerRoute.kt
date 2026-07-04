@@ -4,10 +4,11 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,6 +56,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -66,6 +69,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,6 +84,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -94,20 +99,28 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.repository.FavoriteEdit
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.PlaybackRepeatMode
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.ui.hypeTokens
 import dev.josu.hypecar.core.ui.pressFeedback
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.abs
@@ -196,8 +209,11 @@ internal data class PlayerLayoutMetrics(
 class PlayerViewModel @Inject constructor(
     private val playbackRepository: PlaybackRepository,
     private val meRepository: MeRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
 ) : ViewModel() {
     val queue: StateFlow<PlaybackQueue> = playbackRepository.queue
+    private val _favoriteErrors = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val favoriteErrors: SharedFlow<Unit> = _favoriteErrors.asSharedFlow()
     private val favoriteSyncStates = mutableMapOf<String, FavoriteSyncState>()
 
     fun togglePlayPause() {
@@ -232,7 +248,9 @@ class PlayerViewModel @Inject constructor(
         val current = queue.value
         if (index < 0 || index >= current.items.size || index == current.currentIndex) return
         viewModelScope.launch {
-            playbackRepository.play(current.items.map { it.track }, startIndex = index)
+            // Seek within the live queue instead of rebuilding it with play():
+            // rebuilding reset shuffle order and playback history position.
+            playbackRepository.seekToQueueItem(index)
         }
     }
 
@@ -256,7 +274,11 @@ class PlayerViewModel @Inject constructor(
         val targetLoved = !syncState.desiredLoved
         syncState.desiredLoved = targetLoved
         viewModelScope.launch {
-            playbackRepository.updateFavorite(current.id, targetLoved)
+            // Publish instead of only updating the queue so list screens (and
+            // the car session) flip their hearts for the same track too.
+            favoriteSyncManager.publish(
+                FavoriteEdit(trackId, targetLoved, if (targetLoved) 1 else -1),
+            )
             if (!syncState.isSyncing) {
                 syncState.isSyncing = true
                 syncFavorite(trackId)
@@ -278,11 +300,16 @@ class PlayerViewModel @Inject constructor(
                         current?.id == trackId &&
                         current.isLoved != serverLoved
                     ) {
-                        playbackRepository.updateFavorite(trackId, serverLoved)
+                        // Confirmation only aligns the absolute value — lists
+                        // already counted the optimistic delta, so delta 0.
+                        favoriteSyncManager.publish(FavoriteEdit(trackId, serverLoved, 0))
                     }
                 } else if (syncState.desiredLoved == targetLoved) {
                     syncState.desiredLoved = syncState.confirmedLoved
-                    playbackRepository.updateFavorite(trackId, syncState.confirmedLoved)
+                    favoriteSyncManager.publish(
+                        FavoriteEdit(trackId, syncState.confirmedLoved, if (targetLoved) -1 else 1),
+                    )
+                    _favoriteErrors.tryEmit(Unit)
                 }
             }
         } finally {
@@ -332,18 +359,29 @@ fun PlayerRoute(
     val errorSkippedLabel = stringResource(R.string.player_error_skipped)
     val errorStoppedLabel = stringResource(R.string.player_error_stopped)
     val errorDismissLabel = stringResource(R.string.player_error_dismiss)
+    val favoriteErrorLabel = stringResource(R.string.player_error_favorite)
     val snackbarHostState = remember { SnackbarHostState() }
     val transientError = queue.transientError
     LaunchedEffect(transientError?.eventId) {
         val event = transientError ?: return@LaunchedEffect
         val message = if (event.recoverable) errorSkippedLabel else errorStoppedLabel
         val result = snackbarHostState.showSnackbar(
+            duration = SnackbarDuration.Long,
             message = message,
             actionLabel = errorDismissLabel,
         )
         viewModel.acknowledgePlaybackError(event.eventId)
         if (result == SnackbarResult.ActionPerformed) {
             // user dismissed; nothing further to do
+        }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.favoriteErrors.collect {
+            snackbarHostState.showSnackbar(
+                message = favoriteErrorLabel,
+                actionLabel = errorDismissLabel,
+                duration = SnackbarDuration.Short,
+            )
         }
     }
     val transportTick: () -> Unit = remember(haptics, isAutomotive) {
@@ -353,16 +391,53 @@ fun PlayerRoute(
             { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
         }
     }
-    val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val swipeThresholdPx = with(density) { 120.dp.toPx() }
     val entryOffsetPx = with(density) { 72.dp.toPx() }
     val dismissThresholdPx = with(density) { 140.dp.toPx() }
-    val dragOffset = remember { Animatable(0f) }
-    val dismissOffset = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+    var dismissOffsetPx by remember { mutableFloatStateOf(0f) }
     var pendingDirection by remember { mutableStateOf<PlayerSwipeDirection?>(null) }
     var selectedProgress by remember(currentMediaId) { mutableFloatStateOf(model?.progressFraction ?: 0f) }
     var isSeeking by remember(currentMediaId) { mutableStateOf(false) }
+
+    // Exactly one animation may own each offset at a time: a new drag or
+    // settle cancels the previous job, so a mid-settle grab never fights a
+    // still-running animation over the shared value.
+    val dragSettleJob = remember { mutableStateOf<Job?>(null) }
+    val dismissSettleJob = remember { mutableStateOf<Job?>(null) }
+    fun animateDragOffset(to: Float, spec: AnimationSpec<Float>, onFinished: (() -> Unit)? = null) {
+        dragSettleJob.value?.cancel()
+        dragSettleJob.value = scope.launch {
+            animate(initialValue = dragOffsetPx, targetValue = to, animationSpec = spec) { value, _ ->
+                dragOffsetPx = value
+            }
+            onFinished?.invoke()
+        }
+    }
+    fun animateDismissOffset(to: Float, spec: AnimationSpec<Float>, onFinished: (() -> Unit)? = null) {
+        dismissSettleJob.value?.cancel()
+        dismissSettleJob.value = scope.launch {
+            animate(initialValue = dismissOffsetPx, targetValue = to, animationSpec = spec) { value, _ ->
+                dismissOffsetPx = value
+            }
+            onFinished?.invoke()
+        }
+    }
+
+    // Swiping past the last item (repeat off) must not fling the content off
+    // screen: skipNext would no-op, currentMediaId never changes, and nothing
+    // would ever bring the artwork back. ONE behaves like OFF for manual
+    // navigation, so only ALL wraps.
+    val canSwipeToNext by rememberUpdatedState(
+        queue.items.isNotEmpty() &&
+            (queue.currentIndex < queue.items.lastIndex || queue.repeatMode == PlaybackRepeatMode.ALL),
+    )
+    val canSwipeToPrevious by rememberUpdatedState(
+        queue.items.isNotEmpty() &&
+            (queue.currentIndex > 0 || queue.repeatMode == PlaybackRepeatMode.ALL),
+    )
 
     LaunchedEffect(currentMediaId, model?.progressFraction, isSeeking) {
         if (!isSeeking && model != null) {
@@ -376,105 +451,88 @@ fun PlayerRoute(
                 PlayerSwipeDirection.NEXT -> entryOffsetPx
                 PlayerSwipeDirection.PREVIOUS -> -entryOffsetPx
             }
-            dragOffset.snapTo(incomingOffset)
-            dragOffset.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-            )
+            dragSettleJob.value?.cancel()
+            dragOffsetPx = incomingOffset
+            animateDragOffset(0f, tween(durationMillis = 260, easing = FastOutSlowInEasing))
             pendingDirection = null
         }
     }
 
-    val artworkSwipeModifier = Modifier.pointerInput(currentMediaId) {
+    // detectHorizontal/VerticalDragGestures wait for axis-specific touch slop
+    // before claiming the gesture, so taps aren't eaten by 1px jitter and the
+    // horizontal and vertical handlers never fight over a diagonal drag.
+    val artworkSwipeModifier = Modifier.pointerInput(currentMediaId, swipeThresholdPx) {
         detectHorizontalDragGestures(
-            onDragStart = {
-                scope.launch { dragOffset.stop() }
-            },
-            onHorizontalDrag = { _, dragAmount ->
-                scope.launch {
-                    dragOffset.snapTo(dragOffset.value + dragAmount)
-                }
+            onDragStart = { dragSettleJob.value?.cancel() },
+            onHorizontalDrag = { change, dragAmount ->
+                change.consume()
+                dragOffsetPx += dragAmount
             },
             onDragEnd = {
                 val direction = PlayerSwipeDecision.fromOffset(
-                    offsetPx = dragOffset.value,
+                    offsetPx = dragOffsetPx,
                     thresholdPx = swipeThresholdPx,
                 )
-                scope.launch {
-                    if (direction == null) {
-                        dragOffset.animateTo(
-                            targetValue = 0f,
-                            animationSpec = spring(dampingRatio = 0.75f, stiffness = 420f),
-                        )
-                    } else {
-                        pendingDirection = direction
-                        val exitOffset = when (direction) {
-                            PlayerSwipeDirection.NEXT -> -size.width.toFloat()
-                            PlayerSwipeDirection.PREVIOUS -> size.width.toFloat()
-                        }
-                        dragOffset.animateTo(
-                            targetValue = exitOffset,
-                            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-                        )
+                val allowed = when (direction) {
+                    PlayerSwipeDirection.NEXT -> canSwipeToNext
+                    PlayerSwipeDirection.PREVIOUS -> canSwipeToPrevious
+                    null -> false
+                }
+                if (direction != null && allowed) {
+                    pendingDirection = direction
+                    val exitOffset = when (direction) {
+                        PlayerSwipeDirection.NEXT -> -size.width.toFloat()
+                        PlayerSwipeDirection.PREVIOUS -> size.width.toFloat()
+                    }
+                    animateDragOffset(exitOffset, tween(durationMillis = 180, easing = FastOutSlowInEasing)) {
                         when (direction) {
                             PlayerSwipeDirection.NEXT -> viewModel.skipNext()
                             PlayerSwipeDirection.PREVIOUS -> viewModel.skipPrevious()
                         }
                     }
+                } else {
+                    if (direction == PlayerSwipeDirection.PREVIOUS && !canSwipeToPrevious) {
+                        // No previous item: restart the current track (matching
+                        // the transport button) but keep the artwork in place.
+                        viewModel.skipPrevious()
+                    }
+                    animateDragOffset(0f, spring(dampingRatio = 0.75f, stiffness = 420f))
                 }
             },
             onDragCancel = {
-                scope.launch {
-                    dragOffset.animateTo(
-                        targetValue = 0f,
-                        animationSpec = spring(dampingRatio = 0.75f, stiffness = 420f),
-                    )
-                }
+                animateDragOffset(0f, spring(dampingRatio = 0.75f, stiffness = 420f))
             },
         )
     }
-    val dismissSwipeModifier = Modifier.pointerInput(currentMediaId) {
+    val dismissSwipeModifier = Modifier.pointerInput(dismissThresholdPx) {
         detectVerticalDragGestures(
-            onDragStart = {
-                scope.launch { dismissOffset.stop() }
-            },
+            onDragStart = { dismissSettleJob.value?.cancel() },
             onVerticalDrag = { change, dragAmount ->
-                if (dragAmount > 0f || dismissOffset.value > 0f) {
+                if (dragAmount > 0f || dismissOffsetPx > 0f) {
                     change.consume()
-                    scope.launch {
-                        dismissOffset.snapTo((dismissOffset.value + dragAmount).coerceAtLeast(0f))
-                    }
+                    dismissOffsetPx = (dismissOffsetPx + dragAmount).coerceAtLeast(0f)
                 }
             },
             onDragEnd = {
-                scope.launch {
-                    if (dismissOffset.value >= dismissThresholdPx) {
-                        dismissOffset.animateTo(
-                            targetValue = size.height.toFloat(),
-                            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-                        )
+                if (dismissOffsetPx >= dismissThresholdPx) {
+                    animateDismissOffset(size.height.toFloat(), tween(durationMillis = 180, easing = FastOutSlowInEasing)) {
                         backDispatcher?.onBackPressed()
-                    } else {
-                        dismissOffset.animateTo(
-                            targetValue = 0f,
-                            animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f),
-                        )
                     }
+                } else {
+                    animateDismissOffset(0f, spring(dampingRatio = 0.78f, stiffness = 460f))
                 }
             },
             onDragCancel = {
-                scope.launch {
-                    dismissOffset.animateTo(
-                        targetValue = 0f,
-                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 460f),
-                    )
-                }
+                animateDismissOffset(0f, spring(dampingRatio = 0.78f, stiffness = 460f))
             },
         )
     }
 
     Scaffold(
         containerColor = Color(0xFF0A0809),
+        // Insets are applied once by the content column itself; the default
+        // Scaffold insets would add a second nav-bar height under the deck.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             if (isAutomotive) {
                 CompactPlayerTopBar(onCollapse = { backDispatcher?.onBackPressed() })
@@ -564,7 +622,7 @@ fun PlayerRoute(
                                     },
                                 )
                                 .graphicsLayer {
-                                    translationY = if (isAutomotive) 0f else dismissOffset.value
+                                    translationY = if (isAutomotive) 0f else dismissOffsetPx
                                 },
                         ) {
                             Column(
@@ -572,8 +630,8 @@ fun PlayerRoute(
                                     .fillMaxSize()
                                     .padding(bottom = metrics.bottomControlsReservedHeight)
                                     .graphicsLayer {
-                                        translationX = dragOffset.value
-                                        val progress = (abs(dragOffset.value) / swipeThresholdPx).coerceIn(0f, 1f)
+                                        translationX = dragOffsetPx
+                                        val progress = (abs(dragOffsetPx) / swipeThresholdPx).coerceIn(0f, 1f)
                                         alpha = 1f - (progress * 0.18f)
                                         scaleX = 1f - (progress * 0.04f)
                                         scaleY = 1f - (progress * 0.04f)
@@ -603,7 +661,7 @@ fun PlayerRoute(
                                     // CarPlay/YT-Music idiom without competing with controls.
                                     if (isAutomotive) {
                                         AsyncImage(
-                                            model = model.artworkUrl,
+                                            model = rememberSizedImageRequest(model.artworkUrl, 80.dp, 80.dp),
                                             contentDescription = null,
                                             modifier = Modifier
                                                 .size(80.dp)
@@ -808,12 +866,12 @@ private fun PlayerScrubber(
     val activeColor = if (enabled) Color(0xFFFF9A6D) else Color(0xFF6E615D)
     val inactiveColor = if (enabled) Color(0xFF55463F) else Color(0xFF342D2A)
     val progressLabel = stringResource(R.string.player_progress_label)
+    val layoutDirection = LocalLayoutDirection.current
 
     BoxWithConstraints(
         modifier = modifier
             .height(44.dp)
             .semantics {
-                role = Role.Image
                 contentDescription = progressLabel
                 progressBarRangeInfo = ProgressBarRangeInfo(
                     current = boundedProgress,
@@ -833,14 +891,14 @@ private fun PlayerScrubber(
                 if (!enabled) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown()
-                    var latestProgress = down.position.x.toProgress(size.width)
+                    var latestProgress = down.position.x.toProgress(size.width, layoutDirection)
                     onProgressChange(latestProgress)
                     down.consume()
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) break
-                        latestProgress = change.position.x.toProgress(size.width)
+                        latestProgress = change.position.x.toProgress(size.width, layoutDirection)
                         onProgressChange(latestProgress)
                         change.consume()
                     }
@@ -873,8 +931,13 @@ private fun PlayerScrubber(
     }
 }
 
-private fun Float.toProgress(width: Int): Float =
-    if (width <= 0) 0f else (this / width.toFloat()).coerceIn(0f, 1f)
+private fun Float.toProgress(width: Int, layoutDirection: LayoutDirection): Float {
+    if (width <= 0) return 0f
+    val fraction = (this / width.toFloat()).coerceIn(0f, 1f)
+    // The bar renders mirrored in RTL, so the raw x axis must flip too or
+    // dragging right rewinds while the fill grows the other way.
+    return if (layoutDirection == LayoutDirection.Rtl) 1f - fraction else fraction
+}
 
 @Composable
 private fun PlayerControlDeck(
@@ -1128,7 +1191,7 @@ private fun UpNextStrip(
                 .fillMaxWidth()
                 .height(62.dp),
         ) {
-            itemsIndexed(upcoming) { offset, item ->
+            itemsIndexed(upcoming, key = { _, queued -> queued.mediaId }) { offset, item ->
                 val absoluteIndex = currentIndex + 1 + offset
                 UpNextTile(
                     track = item.track,
@@ -1167,7 +1230,7 @@ private fun UpNextTile(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
-                model = track.bestThumbnail(),
+                model = rememberSizedImageRequest(track.bestThumbnail(), 48.dp, 48.dp),
                 contentDescription = null,
                 modifier = Modifier
                     .size(48.dp)
@@ -1210,7 +1273,9 @@ private fun GlowingArtwork(
     metrics: PlayerLayoutMetrics,
     modifier: Modifier = Modifier,
 ) {
-    // Slow ~5.5s breathing cycle on the warm halo behind the cover art.
+    // Slow ~5.5s breathing cycle on the warm halo behind the cover art. The
+    // transition only runs while the player screen is composed, so the cost
+    // is bounded to the screen actually being open.
     val transition = rememberInfiniteTransition(label = "playerArtworkGlow")
     val breath by transition.animateFloat(
         initialValue = 0f,
@@ -1253,7 +1318,7 @@ private fun GlowingArtwork(
                 ),
         )
         AsyncImage(
-            model = artworkUrl,
+            model = rememberPlayerArtworkRequest(artworkUrl),
             contentDescription = null,
             modifier = Modifier
                 .fillMaxWidth(metrics.artworkWidthFraction)
@@ -1263,6 +1328,41 @@ private fun GlowingArtwork(
                 .background(Color(0xFF211B18)),
             contentScale = ContentScale.Crop,
         )
+    }
+}
+
+@Composable
+private fun rememberSizedImageRequest(
+    url: String?,
+    width: Dp,
+    height: Dp,
+): Any? {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val widthPx = with(density) { width.roundToPx().coerceAtLeast(1) }
+    val heightPx = with(density) { height.roundToPx().coerceAtLeast(1) }
+    return remember(context, url, widthPx, heightPx) {
+        url?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(widthPx, heightPx)
+                .crossfade(false)
+                .build()
+        }
+    }
+}
+
+@Composable
+private fun rememberPlayerArtworkRequest(url: String?): Any? {
+    val context = LocalContext.current
+    return remember(context, url) {
+        url?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(768, 768)
+                .crossfade(false)
+                .build()
+        }
     }
 }
 

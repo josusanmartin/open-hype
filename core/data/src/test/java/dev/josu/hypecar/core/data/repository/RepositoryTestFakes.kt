@@ -12,7 +12,6 @@ import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.network.HypeApiService
 import dev.josu.hypecar.core.network.dto.BlogDto
 import dev.josu.hypecar.core.network.dto.GetTokenResponseDto
-import dev.josu.hypecar.core.network.dto.TagDto
 import dev.josu.hypecar.core.network.dto.TrackDto
 import dev.josu.hypecar.core.network.dto.UserDto
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +55,9 @@ internal class FakeTrackListDao : TrackListDao {
         byKey[item.key] = item
     }
     override suspend fun get(key: String): TrackListEntity? = byKey[key]
+    override suspend fun deleteByKeyPrefix(prefix: String) {
+        byKey.keys.removeAll { it.startsWith(prefix) }
+    }
 }
 
 internal class FakePlaylistDao : PlaylistDao {
@@ -101,8 +103,6 @@ internal abstract class FakeHypeApiService : HypeApiService {
     override suspend fun user(username: String): UserDto = error("Not used")
     override suspend fun userFavorites(username: String, params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun userFriends(username: String, params: Map<String, String>): List<UserDto> = emptyList()
-    override suspend fun tags(): List<TagDto> = emptyList()
-    override suspend fun tagTracks(tagName: String, params: Map<String, String>): List<TrackDto> = emptyList()
 }
 
 internal fun sampleTrackDto(

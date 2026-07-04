@@ -23,7 +23,7 @@ class OfflineEvictionPlannerTest {
     }
 
     @Test
-    fun `keeps stale records over fresh ones until quota is satisfied`() {
+    fun `evicts stale records first and keeps fresh ones within quota`() {
         val records = listOf(
             record(id = "stale-old", bytes = 200, age = 1),
             record(id = "stale-recent", bytes = 200, age = 9),

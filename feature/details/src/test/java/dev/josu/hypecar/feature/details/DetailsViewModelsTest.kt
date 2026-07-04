@@ -6,7 +6,6 @@ import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.PopularMode
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
@@ -70,7 +69,7 @@ class DetailsViewModelsTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.loading).isFalse()
-        assertThat(vm.state.value.error).isEqualTo("offline")
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Network)
         assertThat(vm.state.value.blog).isNull()
     }
 
@@ -93,27 +92,11 @@ class DetailsViewModelsTest {
     }
 
     @Test
-    fun `TagDetailViewModel loads tag tracks`() = runTest {
-        val catalog = ScriptedCatalog(tagTracks = listOf(track("tg1"), track("tg2")))
-        val vm = TagDetailViewModel(
-            savedStateHandle = SavedStateHandle(mapOf("tag" to "techno")),
-            catalogRepository = catalog,
-            playbackRepository = NoOpPlayback,
-        )
-
-        advanceUntilIdle()
-
-        assertThat(vm.state.value.tag).isEqualTo("techno")
-        assertThat(vm.state.value.tracks.map { it.id }).containsExactly("tg1", "tg2").inOrder()
-        assertThat(catalog.tagTracksCalls).containsExactly("techno")
-    }
-
-    @Test
     fun `play forwards loaded tracks at index to playback repository`() = runTest {
-        val catalog = ScriptedCatalog(tagTracks = listOf(track("a"), track("b"), track("c")))
+        val catalog = ScriptedCatalog(blog = sampleBlog, blogTracks = listOf(track("a"), track("b"), track("c")))
         val playback = RecordingPlayback()
-        val vm = TagDetailViewModel(
-            savedStateHandle = SavedStateHandle(mapOf("tag" to "house")),
+        val vm = BlogDetailViewModel(
+            savedStateHandle = SavedStateHandle(mapOf("blogId" to 1)),
             catalogRepository = catalog,
             playbackRepository = playback,
         )
@@ -159,10 +142,8 @@ private class ScriptedCatalog(
     val blogError: Throwable? = null,
     val user: User? = null,
     val userFavorites: List<Track> = emptyList(),
-    val tagTracks: List<Track> = emptyList(),
 ) : CatalogRepository {
     val blogCalls = mutableListOf<Int>()
-    val tagTracksCalls = mutableListOf<String>()
 
     override suspend fun blog(blogId: Int): Blog {
         blogCalls += blogId
@@ -173,17 +154,12 @@ private class ScriptedCatalog(
     override suspend fun blogTracks(blogId: Int, page: Int, count: Int): List<Track> = blogTracks
     override suspend fun user(username: String): User = user ?: error("no user scripted")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = userFavorites
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> {
-        tagTracksCalls += tag
-        return tagTracks
-    }
 
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = error("not used")
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
 }
 
 private class RecordingPlayback : PlaybackRepository {

@@ -2,6 +2,7 @@ package dev.josu.hypecar.core.data.repository
 
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.MeRepository
+import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,17 +28,22 @@ import javax.inject.Singleton
  *
  * Stays @Singleton so a single in-process [SharedFlow] is the source of truth
  * for the heart icon across every screen — when a user loves a track in
- * Latest, the same icon flips in Library and Feed without each screen
- * needing to know about the others.
+ * Latest, the same icon flips in Library, Feed, the player queue, and the
+ * Android Auto session without each surface needing to know about the others.
+ * Every emission is also folded into [PlaybackRepository] so the now-playing
+ * queue (player screen, mini player, car Now Playing) stays in step with the
+ * lists.
  */
 @Singleton
 class FavoriteSyncManager internal constructor(
     private val meRepository: MeRepository,
+    private val playbackRepository: PlaybackRepository,
     private val scope: CoroutineScope,
 ) {
     @Inject
-    constructor(meRepository: MeRepository) : this(
+    constructor(meRepository: MeRepository, playbackRepository: PlaybackRepository) : this(
         meRepository = meRepository,
+        playbackRepository = playbackRepository,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     )
 
@@ -62,7 +68,7 @@ class FavoriteSyncManager internal constructor(
         val optimistic = !track.isLoved
         val optimisticDelta = if (optimistic) 1 else -1
         scope.launch {
-            _edits.emit(FavoriteEdit(track.id, optimistic, optimisticDelta))
+            publish(FavoriteEdit(track.id, optimistic, optimisticDelta))
             val confirmed = runSuspendCatchingPreservingCancellation {
                 meRepository.toggleFavorite(track.id)
             }.getOrNull()
@@ -71,10 +77,21 @@ class FavoriteSyncManager internal constructor(
                 // flag to the confirmed/original value. The net effect on a
                 // list that already applied the optimistic edit is a return to
                 // the last trustworthy state.
-                _edits.emit(FavoriteEdit(track.id, confirmed ?: track.isLoved, -optimisticDelta))
+                publish(FavoriteEdit(track.id, confirmed ?: track.isLoved, -optimisticDelta))
             }
         }
         return optimistic
+    }
+
+    /**
+     * Broadcasts an [edit] produced by a surface that manages its own server
+     * sync (the player screen's reconciliation loop, the Android Auto heart)
+     * so lists and the playback queue stay consistent with it. The playback
+     * update is a no-op when the track isn't in the current queue.
+     */
+    suspend fun publish(edit: FavoriteEdit) {
+        _edits.emit(edit)
+        playbackRepository.updateFavorite(edit.trackId, edit.isLoved)
     }
 
     /**

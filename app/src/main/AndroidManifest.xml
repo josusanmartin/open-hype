@@ -74,6 +74,9 @@
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaLibraryService" />
                 <action android:name="android.media.browse.MediaBrowserService" />
+                <!-- Android Auto's documented voice-search marker (lint's
+                     MissingIntentFilterForMediaSearch enforces it). The spoken
+                     query itself arrives via onSetMediaItems' requestMetadata. -->
                 <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
             </intent-filter>
         </service>

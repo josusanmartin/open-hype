@@ -1,6 +1,10 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.HypeCar" parent="@android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:statusBarColor" tools:targetApi="l">@android:color/transparent</item>
-        <item name="android:navigationBarColor" tools:targetApi="l">@android:color/transparent</item>
+<resources>
+    <!-- Dark platform theme with a matching windowBackground so cold start
+         shows the app's warm-dark canvas instead of a white flash before the
+         first Compose frame renders. -->
+    <style name="Theme.HypeCar" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

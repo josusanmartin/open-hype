@@ -28,6 +28,7 @@ google-services.json
 # Working scratch
 /tmp
 /dist
+/output
 
 # Per-user CI / claude state
 /.claude

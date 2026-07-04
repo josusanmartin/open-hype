@@ -11,8 +11,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
@@ -28,11 +30,12 @@ data class CatalogScreenState(
     val tracks: List<Track> = emptyList(),
     val loading: Boolean = true,
     val refreshing: Boolean = false,
-    val error: String? = null,
+    val error: UiErrorKind? = null,
     val selectedIndex: Int = 0,
     val nextPage: Int = 2,
     val hasMore: Boolean = true,
     val loadingMore: Boolean = false,
+    val loadMoreFailed: Boolean = false,
 )
 
 @HiltViewModel
@@ -102,11 +105,12 @@ class LatestViewModel @Inject constructor(
                             nextPage = latest.nextPage + 1,
                             hasMore = fresh.size >= 30,
                             loadingMore = false,
+                            loadMoreFailed = false,
                         )
                     },
                     onFailure = {
                         // Keep hasMore=true so a transient blip can be retried by scrolling again.
-                        latest.copy(loadingMore = false)
+                        latest.copy(loadingMore = false, loadMoreFailed = true)
                     },
                 )
             }
@@ -122,14 +126,16 @@ class LatestViewModel @Inject constructor(
             _state.update {
                 it.copy(
                     loading = !viaPull && it.tracks.isEmpty(),
-                    refreshing = viaPull,
-                    // Clear loadingMore in case we cancelled a load-more job above.
+                    // Switching chips over existing content shows the refresh
+                    // indicator too — a silent 2s freeze reads as a dead tap.
+                    refreshing = viaPull || it.tracks.isNotEmpty(),
                     loadingMore = false,
+                    loadMoreFailed = false,
                     error = null,
                 )
             }
             val result = runSuspendCatchingPreservingCancellation {
-                catalogRepository.latest(mode = mode, page = 1, count = 30)
+                catalogRepository.latest(mode = mode, page = 1, count = 30, forceRefresh = viaPull)
             }
             _state.update { current ->
                 if (current.selectedIndex != selectedIndex) {
@@ -150,7 +156,7 @@ class LatestViewModel @Inject constructor(
                             current.copy(
                                 loading = false,
                                 refreshing = false,
-                                error = it.message,
+                                error = it.toUiErrorKind(),
                             )
                         },
                     )
@@ -178,7 +184,7 @@ fun LatestRoute(
         tracks = state.tracks,
         isLoading = state.loading,
         error = state.error,
-        chips = LatestMode.entries.map { it.displayLabel },
+        chips = LatestMode.entries.map { latestModeLabel(it) },
         selectedChipIndex = state.selectedIndex,
         onChipSelected = viewModel::selectMode,
         onTrackClick = viewModel::play,
@@ -189,8 +195,19 @@ fun LatestRoute(
         onRetry = viewModel::pullToRefresh,
         onLoadMore = viewModel::loadMore,
         hasMore = state.hasMore,
+        loadMoreFailed = state.loadMoreFailed,
         onRefresh = viewModel::pullToRefresh,
         isRefreshing = state.refreshing,
         listState = listState,
     )
 }
+
+@Composable
+private fun latestModeLabel(mode: LatestMode): String = stringResource(
+    when (mode) {
+        LatestMode.ALL -> R.string.catalog_mode_all
+        LatestMode.FRESHEST -> R.string.catalog_mode_freshest
+        LatestMode.NO_REMIXES -> R.string.catalog_mode_no_remixes
+        LatestMode.ONLY_REMIXES -> R.string.catalog_mode_only_remixes
+    },
+)

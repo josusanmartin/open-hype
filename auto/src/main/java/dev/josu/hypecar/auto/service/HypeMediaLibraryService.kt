@@ -28,9 +28,9 @@ class HypeMediaLibraryService : MediaLibraryService() {
         // Route remote artwork fetches through our app's already-trusted
         // OkHttpClient (see OkHttpBitmapLoader docstring for why the bundled
         // SimpleBitmapLoader fails with "Chain validation failed" on stripped
-        // trust stores like the AAOS_API_35 emulator). CacheBitmapLoader
-        // memoises results so repeated cards on the browse list don't
-        // re-download.
+        // trust stores like the AAOS_API_35 emulator). CacheBitmapLoader only
+        // memoizes the single most recent request; the loader keeps its own
+        // LruCache so browse rows don't re-download on every visit.
         val bitmapLoader = CacheBitmapLoader(okHttpBitmapLoader)
         val session = MediaLibrarySession.Builder(this, playbackManager.player, callback)
             .setBitmapLoader(bitmapLoader)
@@ -86,6 +86,7 @@ class HypeMediaLibraryService : MediaLibraryService() {
         }
         librarySession = null
         callback.close()
+        okHttpBitmapLoader.close()
         super.onDestroy()
     }
 }

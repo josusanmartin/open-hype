@@ -1,0 +1,5 @@
+<resources>
+    <!-- Matches HypeTokens' warm-dark chrome canvas; used only for the
+         pre-Compose window background. -->
+    <color name="window_background">#171310</color>
+</resources>

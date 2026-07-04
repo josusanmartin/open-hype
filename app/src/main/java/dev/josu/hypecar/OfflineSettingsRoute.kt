@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -123,7 +124,7 @@ internal fun quotaQuotaLabel(quotaBytes: Long): String =
 
 @Composable
 internal fun downloadedCountLabel(count: Int): String =
-    stringResource(R.string.settings_downloaded_count, count)
+    androidx.compose.ui.res.pluralStringResource(R.plurals.settings_downloaded_count, count, count)
 
 @Composable
 internal fun syncStatusLabel(status: OfflineSyncStatus): String =
@@ -213,6 +214,9 @@ fun OfflineSettingsRoute(
                     ),
                 ),
             )
+            // Landscape and large font scales exceed the fixed column height;
+            // without this the Sync/Clear rows clip off-screen.
+            .verticalScroll(androidx.compose.foundation.rememberScrollState())
             // Edge-to-edge is on, so reserve the status bar height before the headline.
             .statusBarsPadding()
             .padding(horizontal = 18.dp)
@@ -238,7 +242,7 @@ fun OfflineSettingsRoute(
         )
         Spacer(modifier = Modifier.weight(1f))
         Text(
-            text = "v${BuildConfig.VERSION_NAME}",
+            text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
             color = Color(0xFF6F6760),
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.fillMaxWidth(),
@@ -346,7 +350,11 @@ private fun AutomotiveOfflineSettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text(
-                        text = "${usedLabel(model.usedBytes)} · ${downloadedCountLabel(model.downloadedTrackCount)}",
+                        text = stringResource(
+                            R.string.settings_usage_summary,
+                            usedLabel(model.usedBytes),
+                            downloadedCountLabel(model.downloadedTrackCount),
+                        ),
                         color = Color(0xFFE3D2C7),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),

@@ -1,12 +1,16 @@
-# Design Review — Implementation Status
+# Design Review — Implementation Status (historical)
 
-This document tracks what was landed from `DESIGN_REVIEW.md` and what remains.
-Read alongside the review for context on each item.
+This document is a point-in-time hand-off log for the `DESIGN_REVIEW.md`
+batches. It is kept for history and is NOT maintained against the current
+tree — see CHANGELOG.md for what actually ships.
 
-> Disclaimer: I was unable to run `./gradlew` in the environment where these
-> changes were made, so the build has **not** been compile-verified end to
-> end. Please run `./gradlew assembleDebug testDebugUnitTest checkArchitecture`
-> on your machine and let me know if anything errors so I can patch it.
+> Corrections (2026-07-04): the build has long since been compile-verified
+> (CI runs tests, lint, and an R8 smoke on every push). Three claims below
+> drifted from reality and are called out here rather than rewritten:
+> `StorageLimitPill` was later reinstated for the automotive quota picker;
+> `player_queue_position` / the queue-position label never shipped in its
+> described form; and the "Auth expiration silent failure" item DID land
+> (MainActivity shows a session-expired snackbar via SessionEventBus).
 
 ## What landed in batch 2 (this commit set)
 

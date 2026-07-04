@@ -11,7 +11,6 @@ import dev.josu.hypecar.core.data.local.entity.TrackListEntity
 import dev.josu.hypecar.core.network.HypeApiService
 import dev.josu.hypecar.core.network.dto.BlogDto
 import dev.josu.hypecar.core.network.dto.GetTokenResponseDto
-import dev.josu.hypecar.core.network.dto.TagDto
 import dev.josu.hypecar.core.network.dto.TrackDto
 import dev.josu.hypecar.core.network.dto.UserDto
 import kotlinx.coroutines.CancellationException
@@ -53,6 +52,7 @@ private object CancellationEmptyTrackDao : TrackDao {
 private object CancellationEmptyTrackListDao : TrackListDao {
     override suspend fun upsert(item: TrackListEntity) = Unit
     override suspend fun get(key: String): TrackListEntity? = null
+    override suspend fun deleteByKeyPrefix(prefix: String) = Unit
 }
 
 private object CancellationEmptyPlaylistDao : PlaylistDao {
@@ -83,6 +83,4 @@ private abstract class CancellationEmptyHypeApiService : HypeApiService {
     override suspend fun user(username: String): UserDto = error("Not used")
     override suspend fun userFavorites(username: String, params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun userFriends(username: String, params: Map<String, String>): List<UserDto> = emptyList()
-    override suspend fun tags(): List<TagDto> = emptyList()
-    override suspend fun tagTracks(tagName: String, params: Map<String, String>): List<TrackDto> = emptyList()
 }

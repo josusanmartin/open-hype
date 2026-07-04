@@ -3,10 +3,7 @@
     android:height="96dp"
     android:viewportWidth="96"
     android:viewportHeight="96">
-    <!-- Sign in: phone glyph. -->
-    <path
-        android:fillColor="#FF1F2226"
-        android:pathData="M0,0h96v96h-96z" />
+    <!-- Sign in: transparent glyph so car hosts cannot tint it into a solid square. -->
     <path
         android:fillColor="#FFFF8A3D"
         android:pathData="M34,10 L62,10 C66.4,10 70,13.6 70,18 L70,78 C70,82.4 66.4,86 62,86 L34,86 C29.6,86 26,82.4 26,78 L26,18 C26,13.6 29.6,10 34,10 Z M34,18 L34,70 L62,70 L62,18 L34,18 Z M48,76 C45.8,76 44,77.8 44,80 C44,82.2 45.8,84 48,84 C50.2,84 52,82.2 52,80 C52,77.8 50.2,76 48,76 Z" />

@@ -12,4 +12,8 @@ interface TrackListDao {
 
     @Query("SELECT * FROM track_lists WHERE `key` = :key")
     suspend fun get(key: String): TrackListEntity?
+
+    /** Drops every cached list whose key starts with [prefix] (e.g. `favorites:`). */
+    @Query("DELETE FROM track_lists WHERE `key` LIKE :prefix || '%'")
+    suspend fun deleteByKeyPrefix(prefix: String)
 }

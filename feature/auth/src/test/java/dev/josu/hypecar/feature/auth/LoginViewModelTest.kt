@@ -2,6 +2,7 @@ package dev.josu.hypecar.feature.auth
 
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.model.AuthSession
+import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.repository.AuthRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -57,7 +58,7 @@ class LoginViewModelTest {
         vm.login("j", "wrong") { }
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.error).isEqualTo("Username or password is incorrect.")
+        assertThat(vm.uiState.value.error).isEqualTo(UiErrorKind.InvalidCredentials)
     }
 
     @Test
@@ -68,8 +69,7 @@ class LoginViewModelTest {
         vm.login("j", "p") { }
         advanceUntilIdle()
 
-        assertThat(vm.uiState.value.error)
-            .isEqualTo("Can't reach the server. Check your connection and try again.")
+        assertThat(vm.uiState.value.error).isEqualTo(UiErrorKind.Network)
     }
 
     @Test

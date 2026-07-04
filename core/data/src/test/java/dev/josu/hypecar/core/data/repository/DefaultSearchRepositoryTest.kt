@@ -37,6 +37,24 @@ class DefaultSearchRepositoryTest {
         val cached = repo.searchTracks(SearchQuery("waves", SearchSort.NEWEST), page = 1, count = 30)
         assertThat(cached.map { it.id }).containsExactly("a", "b").inOrder()
     }
+
+    @Test
+    fun `fresh cached search results are returned without hitting network again`() = runBlocking {
+        val api = StubSearchApi(
+            pages = listOf(
+                listOf(sampleTrackDto("a")),
+                listOf(sampleTrackDto("network")),
+            ),
+        )
+        val repo = DefaultSearchRepository(api, FakeTrackDao(), FakeTrackListDao(), Json)
+
+        val first = repo.searchTracks(SearchQuery("waves", SearchSort.NEWEST), page = 1, count = 30)
+        val second = repo.searchTracks(SearchQuery("waves", SearchSort.NEWEST), page = 1, count = 30)
+
+        assertThat(first.map { it.id }).containsExactly("a")
+        assertThat(second.map { it.id }).containsExactly("a")
+        assertThat(api.callCount).isEqualTo(1)
+    }
 }
 
 private class StubSearchApi(
@@ -45,12 +63,13 @@ private class StubSearchApi(
 ) : FakeHypeApiService() {
     private val responses = pages
     private val errors = errorOn
-    private var call = 0
+    var callCount = 0
+        private set
     constructor(initial: List<TrackDto>) : this(pages = listOf(initial))
 
     override suspend fun tracks(params: Map<String, String>): List<TrackDto> {
-        val index = call.coerceAtMost(responses.lastIndex)
-        call += 1
+        val index = callCount.coerceAtMost(responses.lastIndex)
+        callCount += 1
         if (errors.getOrNull(index) == true) throw IOException("offline")
         return responses[index]
     }

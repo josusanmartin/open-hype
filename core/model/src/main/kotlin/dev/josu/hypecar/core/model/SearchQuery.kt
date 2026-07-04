@@ -5,8 +5,8 @@ data class SearchQuery(
     val sort: SearchSort = SearchSort.NEWEST,
 )
 
-enum class SearchSort(val apiValue: String, val displayLabel: String) {
-    NEWEST("latest", "Newest"),
-    MOST_FAVORITES("loved", "Most favorited"),
-    MOST_REBLOGGED("posted", "Most reblogged"),
+enum class SearchSort(val apiValue: String) {
+    NEWEST("latest"),
+    MOST_FAVORITES("loved"),
+    MOST_REBLOGGED("posted"),
 }

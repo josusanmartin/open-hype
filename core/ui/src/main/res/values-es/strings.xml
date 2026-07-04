@@ -3,4 +3,9 @@
     <string name="connectivity_banner_offline">Estás sin conexión — mostrando datos en caché.</string>
     <string name="connectivity_banner_limited">Conexión limitada — algo del contenido puede estar desactualizado.</string>
     <string name="skeleton_loading">Cargando</string>
+
+    <string name="error_network">No se puede conectar con el servidor. Revisa la conexión e inténtalo de nuevo.</string>
+    <string name="error_session_expired">Tu sesión ha caducado. Vuelve a iniciar sesión.</string>
+    <string name="error_server">El servidor tiene problemas en este momento. Inténtalo de nuevo en un rato.</string>
+    <string name="error_generic">Algo salió mal. Inténtalo de nuevo.</string>
 </resources>

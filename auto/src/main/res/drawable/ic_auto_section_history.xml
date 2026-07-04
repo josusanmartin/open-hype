@@ -3,11 +3,8 @@
     android:height="96dp"
     android:viewportWidth="96"
     android:viewportHeight="96">
-    <!-- History: clock face on cream. -->
+    <!-- History: transparent glyph so car hosts cannot tint it into a solid square. -->
     <path
-        android:fillColor="#FFF7F1E8"
-        android:pathData="M0,0h96v96h-96z" />
-    <path
-        android:fillColor="#FF1F2226"
+        android:fillColor="#FFFF8A3D"
         android:pathData="M48,16 C30.3,16 16,30.3 16,48 C16,65.7 30.3,80 48,80 C65.7,80 80,65.7 80,48 C80,30.3 65.7,16 48,16 Z M48,72 C34.7,72 24,61.3 24,48 C24,34.7 34.7,24 48,24 C61.3,24 72,34.7 72,48 C72,61.3 61.3,72 48,72 Z M50,30 L44,30 L44,50 L62,60.6 L65,55.5 L50,46.5 Z" />
 </vector>

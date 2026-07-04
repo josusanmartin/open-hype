@@ -3,6 +3,7 @@ package dev.josu.hypecar.feature.catalog
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -37,7 +38,12 @@ class TrackListBodyScreenTest {
                 }
             }
         }
-        // Spinner has no text — assert tracks empty rendered nothing else.
+        // The loading state renders skeleton rows, each labelled "Loading"
+        // for TalkBack — assert they are actually present (a fully blank
+        // screen used to pass this test).
+        assertThat(
+            composeRule.onAllNodesWithContentDescription("Loading").fetchSemanticsNodes(),
+        ).isNotEmpty()
         assertThat(composeRule.onAllNodesWithText("Nothing here yet.").fetchSemanticsNodes())
             .isEmpty()
     }
@@ -51,7 +57,7 @@ class TrackListBodyScreenTest {
                     TrackListBody(
                         tracks = emptyList(),
                         isLoading = false,
-                        error = "Network unreachable",
+                        error = dev.josu.hypecar.core.model.UiErrorKind.Network,
                         onTrackClick = {},
                         onBlogClick = {},
                         onRetry = { retried = true },
@@ -60,7 +66,7 @@ class TrackListBodyScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("Network unreachable").assertIsDisplayed()
+        composeRule.onNodeWithText("Can't reach the server. Check your connection and try again.").assertIsDisplayed()
         composeRule.onNodeWithText("Retry").assertIsDisplayed().performClick()
 
         assertThat(retried).isTrue()

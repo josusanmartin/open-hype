@@ -31,7 +31,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +46,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -60,7 +60,10 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.model.UiErrorKind
+import dev.josu.hypecar.core.ui.errorLabel
 import dev.josu.hypecar.core.ui.hypeTokens
 import dev.josu.hypecar.core.ui.pressFeedback
 
@@ -95,7 +98,6 @@ internal data class CatalogLayoutMetrics(
     val utilityCornerRadius: Dp,
     val utilityHorizontalPadding: Dp,
     val utilityVerticalPadding: Dp,
-    val utilityIconSize: Dp,
     val selectedIndicatorTopPadding: Dp,
     val selectedIndicatorWidth: Dp,
     val selectedIndicatorHeight: Dp,
@@ -134,7 +136,6 @@ internal data class CatalogLayoutMetrics(
             utilityCornerRadius = 10.dp,
             utilityHorizontalPadding = 9.dp,
             utilityVerticalPadding = 5.dp,
-            utilityIconSize = 15.dp,
             selectedIndicatorTopPadding = 4.dp,
             selectedIndicatorWidth = 44.dp,
             selectedIndicatorHeight = 2.dp,
@@ -179,7 +180,6 @@ internal data class CatalogLayoutMetrics(
                 utilityCornerRadius = 18.dp,
                 utilityHorizontalPadding = 12.dp,
                 utilityVerticalPadding = if (compactHero) 6.dp else 8.dp,
-                utilityIconSize = 20.dp,
                 selectedIndicatorTopPadding = if (compactHero) 5.dp else 8.dp,
                 selectedIndicatorWidth = 60.dp,
                 selectedIndicatorHeight = 3.dp,
@@ -194,7 +194,7 @@ fun TrackListContent(
     subtitle: String,
     tracks: List<Track>,
     isLoading: Boolean,
-    error: String?,
+    error: UiErrorKind?,
     chips: List<String> = emptyList(),
     selectedChipIndex: Int = 0,
     onChipSelected: (Int) -> Unit = {},
@@ -208,15 +208,25 @@ fun TrackListContent(
     onRetry: (() -> Unit)? = null,
     onLoadMore: (() -> Unit)? = null,
     hasMore: Boolean = false,
+    loadMoreFailed: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     isRefreshing: Boolean = false,
     listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     modifier: Modifier = Modifier,
 ) {
     val isAutomotive = rememberIsAutomotiveUi()
+    // Errors while content is already on screen (failed pull-to-refresh or
+    // chip switch) surface as a snackbar — silently keeping the stale list
+    // reads as "the sort applied".
+    val snackbarHostState = androidx.compose.runtime.remember { androidx.compose.material3.SnackbarHostState() }
+    val errorOverContent = if (error != null && tracks.isNotEmpty()) error.errorLabel() else null
+    androidx.compose.runtime.LaunchedEffect(errorOverContent) {
+        errorOverContent?.let { snackbarHostState.showSnackbar(it, duration = androidx.compose.material3.SnackbarDuration.Short) }
+    }
     Scaffold(
         modifier = modifier,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         val heroImage = tracks.firstOrNull()?.bestThumbnail()
         TrackListBody(
@@ -242,6 +252,7 @@ fun TrackListContent(
             onToggleFavorite = onToggleFavorite,
             onLoadMore = onLoadMore,
             hasMore = hasMore,
+            loadMoreFailed = loadMoreFailed,
             onRefresh = onRefresh,
             isRefreshing = isRefreshing,
             listState = listState,
@@ -254,7 +265,7 @@ fun TrackListContent(
 fun TrackListBody(
     tracks: List<Track>,
     isLoading: Boolean,
-    error: String?,
+    error: UiErrorKind?,
     header: (@Composable () -> Unit)? = null,
     emphasizeFirstItem: Boolean = false,
     emptyMessage: String? = null,
@@ -264,6 +275,7 @@ fun TrackListBody(
     onToggleFavorite: ((Track) -> Unit)? = null,
     onLoadMore: (() -> Unit)? = null,
     hasMore: Boolean = false,
+    loadMoreFailed: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     isRefreshing: Boolean = false,
     listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
@@ -321,7 +333,7 @@ fun TrackListBody(
                                 .padding(24.dp),
                         ) {
                             Text(
-                                text = error,
+                                text = error.errorLabel(),
                                 color = MaterialTheme.colorScheme.error,
                             )
                             if (onRetry != null) {
@@ -365,10 +377,20 @@ fun TrackListBody(
                                     .padding(20.dp),
                                 horizontalArrangement = Arrangement.Center,
                             ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(28.dp),
-                                    strokeWidth = 2.dp,
-                                )
+                                if (loadMoreFailed && onLoadMore != null) {
+                                    // A failed page must offer an explicit retry: the scroll
+                                    // sentinel only fires once per position, so an eternal
+                                    // spinner would otherwise sit here until the user scrolls
+                                    // away and back.
+                                    androidx.compose.material3.OutlinedButton(onClick = onLoadMore) {
+                                        Text(stringResource(R.string.catalog_action_retry))
+                                    }
+                                } else {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(28.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
                             }
                         }
                     }
@@ -476,13 +498,18 @@ fun TrackRow(
                     contentAlignment = Alignment.TopStart,
                 ) {
                     if (model.coverArtUrl != null) {
+                        val coverFallback = androidx.compose.ui.graphics.painter.ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
                         AsyncImage(
-                            model = model.coverArtUrl,
+                            model = rememberSizedImageRequest(model.coverArtUrl, coverSize, coverSize),
                             contentDescription = null,
                             modifier = Modifier
                                 .size(coverSize)
                                 .clip(RoundedCornerShape(2.dp)),
                             contentScale = ContentScale.Crop,
+                            // Loading and failed covers render a tonal block instead of a
+                            // fully transparent hole in the card.
+                            placeholder = coverFallback,
+                            error = coverFallback,
                         )
                     } else {
                         Box(
@@ -514,9 +541,12 @@ fun TrackRow(
                             R.string.catalog_action_favorite
                         },
                     )
+                    // The whole card plays the track, so a mis-tap on the heart must
+                    // not start playback: the touch container meets the 48dp minimum
+                    // on phone while the visible circle keeps its compact size.
                     Box(
                         modifier = Modifier
-                            .size(if (isAutomotive) 28.dp else 32.dp)
+                            .size(if (isAutomotive) 28.dp else 48.dp)
                             .clip(CircleShape)
                             .background(if (track.isLoved) Color(0x33FF6A21) else Color.Transparent)
                             .pressFeedback(pressedScale = 0.90f, label = "trackFavoritePress")
@@ -800,30 +830,19 @@ fun EditorialHeroHeader(
                         color = Color(0xAA572313),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x77FFE2C9)),
                     ) {
-                        Row(
+                        Text(
+                            text = utilityLabel,
                             modifier = Modifier.padding(
                                 horizontal = metrics.utilityHorizontalPadding,
                                 vertical = metrics.utilityVerticalPadding,
                             ),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Tune,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(metrics.utilityIconSize),
-                            )
-                            Text(
-                                utilityLabel,
-                                color = Color.White,
-                                style = if (compactMode) {
-                                    MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
-                                } else {
-                                    MaterialTheme.typography.titleMedium
-                                },
-                            )
-                        }
+                            color = Color.White,
+                            style = if (compactMode) {
+                                MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
+                            } else {
+                                MaterialTheme.typography.titleMedium
+                            },
+                        )
                     }
                 }
             }
@@ -989,26 +1008,15 @@ private fun AutomotiveEditorialHeroHeader(
                         color = Color(0xAA572313),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x77FFE2C9)),
                     ) {
-                        Row(
+                        Text(
+                            text = utilityLabel,
                             modifier = Modifier.padding(
                                 horizontal = metrics.utilityHorizontalPadding,
                                 vertical = metrics.utilityVerticalPadding,
                             ),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.Tune,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(metrics.utilityIconSize),
-                            )
-                            Text(
-                                utilityLabel,
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-                            )
-                        }
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                        )
                     }
                 }
             }
@@ -1072,5 +1080,26 @@ fun rememberIsAutomotiveUi(): Boolean {
             Build.PRODUCT.contains("gcar", ignoreCase = true) ||
             Build.DEVICE.contains("car", ignoreCase = true) ||
             Build.FINGERPRINT.contains("gcar", ignoreCase = true)
+    }
+}
+
+@Composable
+private fun rememberSizedImageRequest(
+    url: String?,
+    width: Dp,
+    height: Dp,
+): Any? {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val widthPx = with(density) { width.roundToPx().coerceAtLeast(1) }
+    val heightPx = with(density) { height.roundToPx().coerceAtLeast(1) }
+    return remember(context, url, widthPx, heightPx) {
+        url?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(widthPx, heightPx)
+                .crossfade(false)
+                .build()
+        }
     }
 }

@@ -3,6 +3,7 @@ package dev.josu.hypecar.core.data.repository
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -23,17 +24,23 @@ import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.OfflineDownloadStatus
 import dev.josu.hypecar.core.model.repository.OfflineRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -45,6 +52,7 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.coroutineContext
 
 @Singleton
 class DefaultOfflineRepository @Inject constructor(
@@ -60,6 +68,7 @@ class DefaultOfflineRepository @Inject constructor(
         const val DefaultQuotaBytes = 500L * 1024L * 1024L
         const val FavoritesPageSize = 50
         const val MaxFavoritePages = 40
+        const val RecordPersistBatchSize = 10
         val SyncConstraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.UNMETERED)
             .setRequiresBatteryNotLow(true)
@@ -68,9 +77,17 @@ class DefaultOfflineRepository @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dataStore = PreferenceDataStoreFactory.create(
+        // A corrupt preferences file must degrade to "no downloads recorded",
+        // not poison every subsequent read/edit until app data is cleared.
+        corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
         scope = scope,
         produceFile = { context.preferencesDataStoreFile("offline.preferences_pb") },
     )
+
+    /** Streams whole-file downloads without the API client's short call timeout. */
+    private val downloadClient: OkHttpClient by lazy {
+        client.newBuilder().callTimeout(0, TimeUnit.MILLISECONDS).build()
+    }
     private val enabledKey = booleanPreferencesKey("offline_enabled")
     private val quotaBytesKey = longPreferencesKey("quota_bytes")
     private val recordsKey = stringPreferencesKey("download_records")
@@ -93,14 +110,15 @@ class DefaultOfflineRepository @Inject constructor(
                 .collect { prefs ->
                     val records = decodeRecords(prefs[recordsKey])
                     recordsByTrackId = records.associateBy { it.trackId }
-                    val current = _status.value
-                    _status.value = current.copy(
-                        isEnabled = prefs[enabledKey] ?: false,
-                        quotaBytes = prefs[quotaBytesKey] ?: DefaultQuotaBytes,
-                        usedBytes = records.sumOf { it.byteSize },
-                        downloadedTrackCount = records.size,
-                        lastSyncedAtEpochSeconds = prefs[lastSyncedAtKey],
-                    )
+                    _status.update { current ->
+                        current.copy(
+                            isEnabled = prefs[enabledKey] ?: false,
+                            quotaBytes = prefs[quotaBytesKey] ?: DefaultQuotaBytes,
+                            usedBytes = records.sumOf { it.byteSize },
+                            downloadedTrackCount = records.size,
+                            lastSyncedAtEpochSeconds = prefs[lastSyncedAtKey],
+                        )
+                    }
                 }
         }
     }
@@ -125,7 +143,10 @@ class DefaultOfflineRepository @Inject constructor(
     override suspend fun setQuotaBytes(quotaBytes: Long) {
         val sanitized = quotaBytes.coerceAtLeast(50L * 1024L * 1024L)
         dataStore.edit { prefs -> prefs[quotaBytesKey] = sanitized }
-        trimToQuota(sanitized)
+        // Serialize with any running sync: a concurrent sync's final save would
+        // otherwise resurrect records for the files trim just deleted.
+        activeSyncJob?.cancelAndJoin()
+        syncMutex.withLock { trimToQuota(sanitized) }
         if (_status.value.isEnabled) {
             enqueueImmediateSync()
         }
@@ -150,78 +171,105 @@ class DefaultOfflineRepository @Inject constructor(
         if (prefs[enabledKey] != true) return
         val quotaBytes = prefs[quotaBytesKey] ?: DefaultQuotaBytes
 
-        _status.value = _status.value.copy(isSyncing = true, error = null)
-        val result = runSuspendCatchingPreservingCancellation {
-            cleanupTempFiles()
-            val accumulator = OfflineSyncAccumulator(
-                quotaBytes = quotaBytes,
-                existingRecords = decodeRecords(prefs[recordsKey]),
-            )
-            val seenFavorites = mutableSetOf<String>()
-            var allFavoritesScanned = false
+        _status.update { it.copy(isSyncing = true, error = null) }
+        try {
+            val result = runSuspendCatchingPreservingCancellation {
+                val existingRecords = decodeRecords(prefs[recordsKey])
+                cleanupStrayFiles(existingRecords)
+                val accumulator = OfflineSyncAccumulator(
+                    quotaBytes = quotaBytes,
+                    existingRecords = existingRecords,
+                )
+                val recordPersistBatcher = OfflineRecordPersistBatcher(batchSize = RecordPersistBatchSize)
+                val seenFavorites = mutableSetOf<String>()
+                var allFavoritesScanned = false
 
-            var page = 1
-            paging@ while (accumulator.shouldDownloadNext()) {
-                if (!isStillEnabled()) break
-                val favorites = meRepository.favorites(page = page, count = FavoritesPageSize)
-                if (favorites.isEmpty()) {
-                    allFavoritesScanned = true
-                    break
-                }
+                try {
+                    // The full favorites membership is scanned even when the
+                    // quota has no headroom — stale-favorite eviction below
+                    // needs it, and an exactly-full cache would otherwise
+                    // freeze forever (nothing scanned → nothing evicted →
+                    // nothing downloadable).
+                    var page = 1
+                    paging@ while (true) {
+                        if (!isStillEnabled()) break
+                        val favorites = meRepository.favorites(page = page, count = FavoritesPageSize, forceRefresh = true)
+                        if (favorites.isEmpty()) {
+                            allFavoritesScanned = true
+                            break
+                        }
 
-                for (track in favorites) {
-                    if (!accumulator.shouldDownloadNext()) break@paging
-                    if (!isStillEnabled()) break@paging
-                    seenFavorites += track.id
-                    if (track.audioUnavailable) continue
-                    if (accumulator.contains(track.id)) continue
-                    val remainingBytes = (quotaBytes - accumulator.usedBytes).coerceAtLeast(0L)
-                    val record = downloadTrack(track, remainingBytes) ?: continue
-                    val records = accumulator.recordDownloaded(record)
-                    if (records != null) {
-                        saveRecords(records, lastSyncedAt = null)
-                    } else {
-                        File(cacheDir(), record.fileName).delete()
-                        break@paging
+                        for (track in favorites) {
+                            if (!isStillEnabled()) break@paging
+                            seenFavorites += track.id
+                            if (track.audioUnavailable) continue
+                            if (accumulator.contains(track.id)) continue
+                            if (!accumulator.shouldDownloadNext()) continue
+                            val remainingBytes = (quotaBytes - accumulator.usedBytes).coerceAtLeast(0L)
+                            val record = downloadTrack(track, remainingBytes) ?: continue
+                            val records = accumulator.recordDownloaded(record)
+                            if (records != null) {
+                                if (recordPersistBatcher.recordDownloaded()) {
+                                    saveRecords(records, lastSyncedAt = null)
+                                    recordPersistBatcher.markPersisted()
+                                }
+                            } else {
+                                File(cacheDir(), record.fileName).delete()
+                            }
+                        }
+
+                        if (favorites.size < FavoritesPageSize) {
+                            allFavoritesScanned = true
+                            break
+                        }
+                        page += 1
+                        if (page > MaxFavoritePages) break
+                    }
+                } finally {
+                    if (recordPersistBatcher.hasPendingWrites) {
+                        withContext(NonCancellable) {
+                            saveRecords(accumulator.records, lastSyncedAt = null)
+                        }
                     }
                 }
 
-                if (favorites.size < FavoritesPageSize) {
-                    allFavoritesScanned = true
-                    break
-                }
-                page += 1
-                if (page > MaxFavoritePages) break
+                val trimmed = trimRecordsToQuota(
+                    records = accumulator.records,
+                    quotaBytes = quotaBytes,
+                    staleTrackIds = if (allFavoritesScanned) {
+                        accumulator.records.map { it.trackId }.filterNot { it in seenFavorites }.toSet()
+                    } else {
+                        emptySet()
+                    },
+                )
+                saveRecords(trimmed, lastSyncedAt = nowSeconds())
             }
 
-            val trimmed = trimRecordsToQuota(
-                records = accumulator.records,
-                quotaBytes = quotaBytes,
-                staleTrackIds = if (allFavoritesScanned) {
-                    accumulator.records.map { it.trackId }.filterNot { it in seenFavorites }.toSet()
-                } else {
-                    emptySet()
-                },
-            )
-            saveRecords(trimmed, lastSyncedAt = nowSeconds())
+            _status.update { it.copy(isSyncing = false, error = result.exceptionOrNull()?.message) }
+        } finally {
+            // Cancellation rethrows past the block above (navigating away from
+            // Settings, toggling offline off, a REPLACEd worker); without this
+            // reset the UI would show "Syncing…" and keep the button disabled
+            // forever.
+            if (_status.value.isSyncing) {
+                withContext(NonCancellable) {
+                    _status.update { it.copy(isSyncing = false) }
+                }
+            }
         }
-
-        _status.value = _status.value.copy(
-            isSyncing = false,
-            error = result.exceptionOrNull()
-                ?.takeUnless { it is kotlinx.coroutines.CancellationException }
-                ?.message,
-        )
     }
 
     private suspend fun isStillEnabled(): Boolean =
         runCatching { dataStore.data.first()[enabledKey] == true }.getOrDefault(false)
 
     override suspend fun clearDownloads() {
-        withContext(Dispatchers.IO) {
-            cacheDir().listFiles()?.forEach { it.delete() }
+        activeSyncJob?.cancelAndJoin()
+        syncMutex.withLock {
+            withContext(Dispatchers.IO) {
+                cacheDir().listFiles()?.forEach { it.delete() }
+            }
+            saveRecords(emptyList(), lastSyncedAt = _status.value.lastSyncedAtEpochSeconds)
         }
-        saveRecords(emptyList(), lastSyncedAt = _status.value.lastSyncedAtEpochSeconds)
     }
 
     override fun cachedAudioUri(trackId: String): String? {
@@ -265,11 +313,13 @@ class DefaultOfflineRepository @Inject constructor(
 
     private fun publishRecordState(records: List<OfflineTrackRecord>, lastSyncedAt: Long?) {
         recordsByTrackId = records.associateBy { it.trackId }
-        _status.value = _status.value.copy(
-            usedBytes = records.sumOf { it.byteSize },
-            downloadedTrackCount = records.size,
-            lastSyncedAtEpochSeconds = lastSyncedAt ?: _status.value.lastSyncedAtEpochSeconds,
-        )
+        _status.update { current ->
+            current.copy(
+                usedBytes = records.sumOf { it.byteSize },
+                downloadedTrackCount = records.size,
+                lastSyncedAtEpochSeconds = lastSyncedAt ?: current.lastSyncedAtEpochSeconds,
+            )
+        }
     }
 
     private fun trimRecordsToQuota(
@@ -290,29 +340,12 @@ class DefaultOfflineRepository @Inject constructor(
             temp.delete()
             val request = Request.Builder().url(track.streamUrl()).build()
             runSuspendCatchingPreservingCancellation {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@runSuspendCatchingPreservingCancellation null
-                    val body = response.body ?: return@runSuspendCatchingPreservingCancellation null
-                    var bytesWritten = 0L
-                    temp.outputStream().use { output ->
-                        body.byteStream().use { input ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read == -1) break
-                                bytesWritten += read
-                                if (bytesWritten > maxBytes) {
-                                    temp.delete()
-                                    return@runSuspendCatchingPreservingCancellation null
-                                }
-                                output.write(buffer, 0, read)
-                            }
-                        }
-                    }
-                    if (bytesWritten <= 0L) {
-                        temp.delete()
-                        return@runSuspendCatchingPreservingCancellation null
-                    }
+                try {
+                    downloadTo(temp, request, maxBytes)
+                } catch (cancellation: CancellationException) {
+                    temp.delete()
+                    throw cancellation
+                }?.let { bytesWritten ->
                     if (target.exists()) target.delete()
                     if (!temp.renameTo(target)) {
                         temp.delete()
@@ -332,12 +365,51 @@ class DefaultOfflineRepository @Inject constructor(
             }.getOrNull()
         }
 
+    /** Streams [request]'s body into [temp]; returns bytes written, or null when skipped/aborted. */
+    private suspend fun downloadTo(temp: File, request: Request, maxBytes: Long): Long? =
+        downloadClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val body = response.body ?: return@use null
+            var bytesWritten = 0L
+            temp.outputStream().use { output ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        // Without this check, cancelling the sync (toggle off,
+                        // quota change) would silently wait out the transfer.
+                        coroutineContext.ensureActive()
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        bytesWritten += read
+                        if (bytesWritten > maxBytes) {
+                            temp.delete()
+                            return@use null
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+            }
+            if (bytesWritten <= 0L) {
+                temp.delete()
+                null
+            } else {
+                bytesWritten
+            }
+        }
+
     private fun cacheDir(): File =
         File(context.filesDir, "offline_audio").apply { mkdirs() }
 
-    private fun cleanupTempFiles() {
+    /**
+     * Deletes leftover `.tmp` files and orphaned `.audio` files that no record
+     * references. Orphans appear when the process dies between a completed
+     * download and the next batched record save; without this sweep they
+     * consume disk invisibly forever.
+     */
+    private fun cleanupStrayFiles(records: List<OfflineTrackRecord>) {
+        val recordedNames = records.mapTo(mutableSetOf()) { it.fileName }
         cacheDir().listFiles()
-            ?.filter { it.name.endsWith(".tmp") }
+            ?.filter { it.name.endsWith(".tmp") || it.name !in recordedNames }
             ?.forEach { it.delete() }
     }
 
@@ -389,6 +461,30 @@ internal class OfflineSyncAccumulator(
         if (!planner.recordDownloaded(record.byteSize)) return null
         recordsByTrackId[record.trackId] = record
         return records
+    }
+}
+
+internal class OfflineRecordPersistBatcher(
+    private val batchSize: Int,
+) {
+    private var pendingDownloads = 0
+
+    val hasPendingWrites: Boolean
+        get() = pendingDownloads > 0
+
+    /** Returns true when the batch is full and the caller should persist now. */
+    fun recordDownloaded(): Boolean {
+        pendingDownloads += 1
+        return pendingDownloads >= batchSize.coerceAtLeast(1)
+    }
+
+    /**
+     * Call after a successful persist. Kept separate from [recordDownloaded]
+     * so a failed save leaves [hasPendingWrites] true and the final flush
+     * still covers those records.
+     */
+    fun markPersisted() {
+        pendingDownloads = 0
     }
 }
 

@@ -127,15 +127,6 @@ class MoreMapperTests {
         assertThat(user.isFollower).isFalse()
     }
 
-    // ---- TagDto ----
-
-    @Test
-    fun `tag name and priority round-trip`() {
-        val tag = TagDto(name = "techno", priority = true).toModel()
-        assertThat(tag.name).isEqualTo("techno")
-        assertThat(tag.priority).isTrue()
-    }
-
     // ---- GetTokenResponseDto ----
 
     @Test

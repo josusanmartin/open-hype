@@ -14,6 +14,7 @@ import dev.josu.hypecar.core.data.BuildConfig
 import dev.josu.hypecar.core.data.local.HypeDatabase
 import dev.josu.hypecar.core.data.net.AndroidConnectivityRepository
 import dev.josu.hypecar.core.data.net.ResilientDns
+import dev.josu.hypecar.core.data.repository.AccountLocalDataWiper
 import dev.josu.hypecar.core.data.repository.DefaultAuthRepository
 import dev.josu.hypecar.core.data.repository.DefaultCatalogRepository
 import dev.josu.hypecar.core.data.repository.DefaultHistoryRepository
@@ -31,6 +32,8 @@ import dev.josu.hypecar.core.model.repository.OfflineRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
 import dev.josu.hypecar.core.network.HypeApiInterceptor
 import dev.josu.hypecar.core.network.HypeApiService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.Cache
 import okhttp3.MediaType.Companion.toMediaType
@@ -73,52 +76,68 @@ object DataModule {
 
     @Provides
     @Singleton
-    fun provideOkHttp(
-        @ApplicationContext context: Context,
-        sessionStore: HypeSessionStore,
-    ): OkHttpClient {
+    fun provideHttpCache(@ApplicationContext context: Context): Cache {
         val cacheDir = File(context.cacheDir, "okhttp").apply { mkdirs() }
-        val cache = Cache(cacheDir, OkHttpCacheBytes)
-        return OkHttpClient.Builder()
-            .cache(cache)
-            .dns(ResilientDns())
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
-            .callTimeout(25, TimeUnit.SECONDS)
-            .addInterceptor(
-                HypeApiInterceptor(
-                    authTokenProvider = sessionStore,
-                    devProxyAllowed = BuildConfig.ENABLE_AAOS_DEV_PROXY,
-                ),
-            )
-            .addInterceptor(UnauthorizedSessionInterceptor(sessionGateway = sessionStore))
-            .addNetworkInterceptor { chain ->
-                val response = chain.proceed(chain.request())
-                if (
-                    chain.request().method == "GET" &&
-                    response.isSuccessful &&
-                    chain.request().url.host == "api.hypem.com"
-                ) {
+        return Cache(cacheDir, OkHttpCacheBytes)
+    }
+
+    @Provides
+    @Singleton
+    fun provideOkHttp(
+        cache: Cache,
+        sessionStore: HypeSessionStore,
+    ): OkHttpClient = OkHttpClient.Builder()
+        .cache(cache)
+        .dns(ResilientDns())
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(25, TimeUnit.SECONDS)
+        .apply {
+            if (BuildConfig.ENABLE_AAOS_DEV_PROXY) {
+                // Added BEFORE HypeApiInterceptor on purpose: application
+                // interceptors run in order, so this logs the request URL
+                // before the hm_token query parameter is appended — the
+                // session token never reaches logcat.
+                addInterceptor(
+                    HttpLoggingInterceptor().apply {
+                        level = HttpLoggingInterceptor.Level.BASIC
+                    },
+                )
+            }
+        }
+        .addInterceptor(
+            HypeApiInterceptor(
+                authTokenProvider = sessionStore,
+                devProxyAllowed = BuildConfig.ENABLE_AAOS_DEV_PROXY,
+            ),
+        )
+        .addInterceptor(UnauthorizedSessionInterceptor(sessionGateway = sessionStore))
+        .addNetworkInterceptor { chain ->
+            val request = chain.request()
+            val response = chain.proceed(request)
+            // The session token rides as an hm_token query parameter, so a
+            // cached authenticated response stores the plaintext token in
+            // the cache journal (and would replay one account's private
+            // lists to the next). Those responses must never touch disk;
+            // only anonymous catalog GETs get the short cache window.
+            val carriesAuthToken = request.url.queryParameter("hm_token") != null
+            when {
+                request.method != "GET" || request.url.host != "api.hypem.com" -> response
+                carriesAuthToken ->
+                    response.newBuilder()
+                        .removeHeader("Pragma")
+                        .header("Cache-Control", "no-store")
+                        .build()
+                response.isSuccessful ->
                     response.newBuilder()
                         .removeHeader("Pragma")
                         .header("Cache-Control", "public, max-age=$ApiCacheMaxAgeSeconds")
                         .build()
-                } else {
-                    response
-                }
+                else -> response
             }
-            .apply {
-                if (BuildConfig.ENABLE_AAOS_DEV_PROXY) {
-                    addInterceptor(
-                        HttpLoggingInterceptor().apply {
-                            level = HttpLoggingInterceptor.Level.BASIC
-                        },
-                    )
-                }
-            }
-            .build()
-    }
+        }
+        .build()
 
     private const val OkHttpCacheBytes: Long = 10L * 1024L * 1024L
     private const val ApiCacheMaxAgeSeconds: Int = 60
@@ -156,8 +175,28 @@ object DataModule {
 
     @Provides
     @Singleton
-    fun provideAuthRepository(api: HypeApiService, sessionStore: HypeSessionStore): AuthRepository =
-        DefaultAuthRepository(api, sessionStore)
+    fun provideAuthRepository(
+        api: HypeApiService,
+        sessionStore: HypeSessionStore,
+        db: HypeDatabase,
+        offlineRepository: OfflineRepository,
+        cache: Cache,
+    ): AuthRepository =
+        DefaultAuthRepository(
+            api = api,
+            sessionStore = sessionStore,
+            accountDataWiper = AccountLocalDataWiper {
+                // Cached lists, play history, downloaded audio, and the HTTP
+                // cache all derive from the signed-in account; none may leak
+                // into the next session on this device.
+                withContext(Dispatchers.IO) {
+                    runCatching { cache.evictAll() }
+                    db.clearAllTables()
+                }
+                offlineRepository.setEnabled(false)
+                offlineRepository.clearDownloads()
+            },
+        )
 
     @Provides
     @Singleton

@@ -25,6 +25,7 @@ android {
 
 dependencies {
     implementation(project(":core:model"))
+    implementation(project(":core:data"))
     implementation(project(":core:playback"))
     implementation(project(":core:ui"))
     implementation(libs.androidx.core.ktx)

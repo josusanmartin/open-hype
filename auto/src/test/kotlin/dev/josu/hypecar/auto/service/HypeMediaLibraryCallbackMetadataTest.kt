@@ -1,9 +1,16 @@
 package dev.josu.hypecar.auto.service
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.net.Uri
+import android.os.Bundle
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionError
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.auto.HypeMediaIds
@@ -14,7 +21,6 @@ import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.SearchQuery
-import dev.josu.hypecar.core.model.Tag
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.AuthRepository
@@ -27,9 +33,16 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 class HypeMediaLibraryCallbackMetadataTest {
@@ -42,6 +55,7 @@ class HypeMediaLibraryCallbackMetadataTest {
         searchRepository = EmptySearchRepository,
         offlineRepository = EmptyOfflineRepository,
         authRepository = SignedInAuthRepository,
+        favoriteSyncManager = metadataTestFavoriteSyncManager(),
         okHttpClient = TestOkHttpClient,
     )
 
@@ -73,13 +87,18 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
-    fun `media button preferences omit Auto-only custom actions from phone notification`() {
+    fun `phone notification media button preferences keep transport slots and put the heart in overflow`() {
         val buttons = callback.privateMediaButtonPreferences()
 
         assertThat(buttons.map { it.displayName.toString() }).containsExactly(
             "Previous",
             "Next",
+            "Favorite",
         ).inOrder()
+        val favorite = buttons.single { it.displayName.toString() == "Favorite" }
+        assertThat(favorite.slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
+        assertThat(favorite.slots.contains(CommandButton.SLOT_FORWARD)).isFalse()
+        assertThat(favorite.slots.contains(CommandButton.SLOT_BACK)).isFalse()
     }
 
     @Test
@@ -92,6 +111,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             "Next",
         ).inOrder()
         assertThat(buttons[0].slots.contains(CommandButton.SLOT_BACK)).isTrue()
+        assertThat(buttons[1].sessionCommand?.customAction).contains("TOGGLE_FAVORITE")
         assertThat(buttons[1].slots.contains(CommandButton.SLOT_BACK_SECONDARY)).isTrue()
         assertThat(buttons[1].slots.contains(CommandButton.SLOT_FORWARD_SECONDARY)).isTrue()
         assertThat(buttons[1].slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
@@ -99,19 +119,27 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
-    fun `Auto custom action layout exposes only favorite so host transport controls stay visible`() {
+    fun `car media button favorite preference switches icon when loved`() {
+        val buttons = callback.privateCarMediaButtonPreferences(loved = true)
+
+        val favorite = buttons.single { it.sessionCommand?.customAction?.contains("TOGGLE_FAVORITE") == true }
+
+        assertThat(favorite.displayName.toString()).isEqualTo("Unfavorite")
+        assertThat(favorite.icon).isEqualTo(CommandButton.ICON_HEART_FILLED)
+    }
+
+    @Test
+    fun `Auto custom action layout stays empty because car hosts render media button preferences`() {
+        val buttons = callback.privateNowPlayingLayout(loved = true)
+
+        assertThat(buttons).isEmpty()
+    }
+
+    @Test
+    fun `Auto custom action layout also stays empty when favorite is off`() {
         val buttons = callback.privateNowPlayingLayout(loved = false)
 
-        assertThat(buttons.map { it.displayName.toString() }).containsExactly("Favorite")
-        assertThat(buttons.map { it.icon }).containsExactly(CommandButton.ICON_HEART_UNFILLED)
-        buttons.forEach { button ->
-            assertThat(button.displayName.toString()).isNotEmpty()
-            assertThat(button.icon).isNotEqualTo(CommandButton.ICON_UNDEFINED)
-            assertThat(button.iconResId).isEqualTo(CommandButton.getIconResIdForIconConstant(button.icon))
-            assertThat(button.slots.contains(CommandButton.SLOT_BACK_SECONDARY)).isTrue()
-            assertThat(button.slots.contains(CommandButton.SLOT_FORWARD_SECONDARY)).isTrue()
-            assertThat(button.slots.contains(CommandButton.SLOT_OVERFLOW)).isTrue()
-        }
+        assertThat(buttons).isEmpty()
     }
 
     @Test
@@ -124,6 +152,90 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
+    fun `favorite state prefers remembered Auto toggle over stale media metadata`() {
+        val item = MediaItem.Builder()
+            .setMediaId(HypeMediaIds.track("fav"))
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle("Title")
+                    .setArtist("Artist")
+                    .setExtras(
+                        Bundle().apply {
+                            putBoolean("is_loved", false)
+                            putString("blog_name", "Blog")
+                        },
+                    )
+                    .build(),
+            )
+            .build()
+
+        assertThat(callback.privateFavoriteStateFor(item)).isFalse()
+
+        callback.privateRememberFavoriteState(trackId = "fav", loved = true)
+
+        assertThat(callback.privateFavoriteStateFor(item)).isTrue()
+    }
+
+    @Test
+    fun `Auto favorite toggle result reports io error when repository cannot confirm`() = runBlocking {
+        val result = resolveAutoFavoriteToggle(
+            meRepository = PlaylistsMeRepository(emptyList()),
+            trackId = "fav",
+            originalLoved = false,
+        )
+
+        assertThat(result.confirmedLoved).isFalse()
+        assertThat(result.sessionResult.resultCode).isEqualTo(SessionError.ERROR_IO)
+    }
+
+    @Test
+    fun `Auto inline artwork is downsampled and cached`() {
+        val networkCalls = AtomicInteger(0)
+        val artworkBytes = testJpegBytes(width = 1600, height = 1000)
+        val client = okhttp3.OkHttpClient.Builder()
+            .addInterceptor(
+                Interceptor { chain ->
+                    networkCalls.incrementAndGet()
+                    Response.Builder()
+                        .request(chain.request())
+                        .protocol(Protocol.HTTP_1_1)
+                        .code(200)
+                        .message("OK")
+                        .body(artworkBytes.toResponseBody("image/jpeg".toMediaType()))
+                        .build()
+                },
+            )
+            .build()
+        val callback = HypeMediaLibraryCallback(
+            context = testContext,
+            catalogRepository = EmptyCatalogRepository,
+            meRepository = EmptyMeRepository,
+            searchRepository = EmptySearchRepository,
+            offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
+            okHttpClient = client,
+        )
+        val item = MediaItem.Builder()
+            .setMediaId(HypeMediaIds.track("art"))
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setArtworkUri(Uri.parse("https://art.example/cover.jpg"))
+                    .build(),
+            )
+            .build()
+
+        val first = callback.privateWithInlineArtworkForTests(item)
+        val second = callback.privateWithInlineArtworkForTests(item)
+        val firstArtwork = first.mediaMetadata.artworkData!!
+        val decoded = BitmapFactory.decodeByteArray(firstArtwork, 0, firstArtwork.size)!!
+
+        assertThat(networkCalls.get()).isEqualTo(1)
+        assertThat(second.mediaMetadata.artworkData).isEqualTo(firstArtwork)
+        assertThat(maxOf(decoded.width, decoded.height)).isAtMost(512)
+    }
+
+    @Test
     fun `loadChildren returns empty list when repository fails`() {
         val failingCallback = HypeMediaLibraryCallback(
             context = testContext,
@@ -132,6 +244,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -149,6 +262,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -169,6 +283,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val idOnlyItem = MediaItem.Builder()
@@ -191,6 +306,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
@@ -220,6 +336,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val mediaId = HypeMediaIds.track(
@@ -252,6 +369,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = SearchTracksRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
@@ -281,6 +399,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
@@ -309,6 +428,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val prebuilt = MediaItem.Builder()
@@ -333,6 +453,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
         val resolvedItem = MediaItem.Builder()
@@ -360,6 +481,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -379,6 +501,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -399,6 +522,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -417,6 +541,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = SearchTracksRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -439,6 +564,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -462,6 +588,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -485,6 +612,7 @@ class HypeMediaLibraryCallbackMetadataTest {
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
             okHttpClient = TestOkHttpClient,
         )
 
@@ -513,18 +641,20 @@ private fun HypeMediaLibraryCallback.privatePlayableItem(track: Track): MediaIte
         Track::class.java,
         String::class.java,
         Int::class.javaPrimitiveType,
+        Int::class.javaPrimitiveType,
     )
     method.isAccessible = true
-    return method.invoke(this, track, null, 0) as MediaItem
+    return method.invoke(this, track, null, 0, 0) as MediaItem
 }
 
 @Suppress("UNCHECKED_CAST")
-private fun HypeMediaLibraryCallback.privateMediaButtonPreferences(): List<CommandButton> {
+private fun HypeMediaLibraryCallback.privateMediaButtonPreferences(loved: Boolean = false): List<CommandButton> {
     val method = javaClass.getDeclaredMethod(
         "buildMediaButtonPreferences",
+        Boolean::class.javaPrimitiveType,
     )
     method.isAccessible = true
-    return method.invoke(this) as List<CommandButton>
+    return method.invoke(this, loved) as List<CommandButton>
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -555,6 +685,34 @@ private fun HypeMediaLibraryCallback.privateNotificationCustomLayout(loved: Bool
     )
     method.isAccessible = true
     return method.invoke(this, loved) as List<CommandButton>
+}
+
+private fun HypeMediaLibraryCallback.privateFavoriteStateFor(mediaItem: MediaItem): Boolean {
+    val method = javaClass.getDeclaredMethod(
+        "favoriteStateFor",
+        MediaItem::class.java,
+    )
+    method.isAccessible = true
+    return method.invoke(this, mediaItem) as Boolean
+}
+
+private fun HypeMediaLibraryCallback.privateRememberFavoriteState(trackId: String, loved: Boolean) {
+    val method = javaClass.getDeclaredMethod(
+        "rememberFavoriteState",
+        String::class.java,
+        Boolean::class.javaPrimitiveType,
+    )
+    method.isAccessible = true
+    method.invoke(this, trackId, loved)
+}
+
+private fun HypeMediaLibraryCallback.privateWithInlineArtworkForTests(mediaItem: MediaItem): MediaItem {
+    val method = javaClass.getDeclaredMethod(
+        "withInlineArtworkForTests",
+        MediaItem::class.java,
+    )
+    method.isAccessible = true
+    return method.invoke(this, mediaItem) as MediaItem
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -626,8 +784,8 @@ private val thirdTrack = sampleTrack.copy(
 )
 
 private object EmptyCatalogRepository : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = sampleTrack
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun blog(blogId: Int): Blog = error("Not used")
@@ -635,13 +793,11 @@ private object EmptyCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("Not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object FailingCatalogRepository : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = error("Network unavailable")
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = error("Network unavailable")
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = error("Network unavailable")
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = error("Network unavailable")
     override suspend fun track(trackId: String): Track = error("Network unavailable")
     override suspend fun blogs(page: Int, count: Int): List<Blog> = error("Network unavailable")
     override suspend fun blog(blogId: Int): Blog = error("Network unavailable")
@@ -649,13 +805,11 @@ private object FailingCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("Network unavailable")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = error("Network unavailable")
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = error("Network unavailable")
-    override suspend fun tags(): List<Tag> = error("Network unavailable")
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = error("Network unavailable")
 }
 
 private object TrackCatalogRepository : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = sampleTrack.takeIf { it.id == trackId } ?: error("Unknown track")
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun blog(blogId: Int): Blog = error("Not used")
@@ -663,15 +817,13 @@ private object TrackCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("Not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object LatestCatalogRepository : CatalogRepository {
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> =
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> =
         listOf(sampleTrack, secondTrack, thirdTrack)
 
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = listOf(sampleTrack, secondTrack, thirdTrack)
         .firstOrNull { it.id == trackId }
         ?: error("Unknown track")
@@ -681,16 +833,14 @@ private object LatestCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("Not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private object EmptyMeRepository : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = false
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
@@ -705,12 +855,6 @@ private object SearchTracksRepository : SearchRepository {
 
 private object SignedInAuthRepository : AuthRepository {
     override val session: Flow<AuthSession?> = flowOf(AuthSession(username = "tester", token = "tok"))
-    override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
-    override suspend fun logout() = Unit
-}
-
-private object SignedOutAuthRepository : AuthRepository {
-    override val session: Flow<AuthSession?> = flowOf(null)
     override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
     override suspend fun logout() = Unit
 }
@@ -732,7 +876,7 @@ private object EmptyOfflineRepository : OfflineRepository {
 private class PagedLatestCatalogRepository : CatalogRepository {
     val requestedApiPages = mutableListOf<Int>()
 
-    override suspend fun latest(mode: LatestMode, page: Int, count: Int): List<Track> {
+    override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> {
         requestedApiPages += page
         // page is 1-based (apiPage). Source page index = page - 1.
         val sourcePage = page - 1
@@ -742,7 +886,7 @@ private class PagedLatestCatalogRepository : CatalogRepository {
         )
     }
 
-    override suspend fun popular(mode: PopularMode, page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun track(trackId: String): Track = error("not used")
     override suspend fun blogs(page: Int, count: Int): List<Blog> = emptyList()
     override suspend fun blog(blogId: Int): Blog = error("not used")
@@ -750,30 +894,58 @@ private class PagedLatestCatalogRepository : CatalogRepository {
     override suspend fun user(username: String): User = error("not used")
     override suspend fun userFavorites(username: String, page: Int, count: Int): List<Track> = emptyList()
     override suspend fun userFriends(username: String, page: Int, count: Int): List<User> = emptyList()
-    override suspend fun tags(): List<Tag> = emptyList()
-    override suspend fun tagTracks(tag: String, page: Int, count: Int): List<Track> = emptyList()
 }
 
 private class PlaylistsMeRepository(
     private val playlists: List<Playlist>,
 ) : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = playlists
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = emptyList()
-    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
 private class PlaylistTracksMeRepository(
     private val tracks: List<Track>,
 ) : MeRepository {
-    override suspend fun favorites(page: Int, count: Int): List<Track> = emptyList()
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun toggleFavorite(trackId: String): Boolean? = null
     override suspend fun playlistNames(): List<Playlist> = emptyList()
-    override suspend fun playlist(playlistId: Int, page: Int, count: Int): List<Track> = tracks
-    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int): List<FeedItem> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = tracks
+    override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }
 
 private val TestOkHttpClient: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder().build()
+
+private fun testJpegBytes(width: Int, height: Int): ByteArray {
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    bitmap.eraseColor(Color.rgb(220, 92, 34))
+    return try {
+        java.io.ByteArrayOutputStream().use { output ->
+            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
+            output.toByteArray()
+        }
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+private object MetadataNoOpPlaybackRepository : dev.josu.hypecar.core.model.repository.PlaybackRepository {
+    override val queue: kotlinx.coroutines.flow.StateFlow<dev.josu.hypecar.core.model.PlaybackQueue> =
+        kotlinx.coroutines.flow.MutableStateFlow(dev.josu.hypecar.core.model.PlaybackQueue())
+    override suspend fun play(tracks: List<Track>, startIndex: Int) = Unit
+    override suspend fun playFromTrack(track: Track) = Unit
+    override suspend fun togglePlayPause() = Unit
+    override suspend fun skipNext() = Unit
+    override suspend fun skipPrevious() = Unit
+    override suspend fun seekTo(positionMs: Long) = Unit
+    override suspend fun toggleShuffle() = Unit
+    override suspend fun cycleRepeatMode() = Unit
+    override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
+}
+
+private fun metadataTestFavoriteSyncManager() =
+    dev.josu.hypecar.core.data.repository.FavoriteSyncManager(EmptyMeRepository, MetadataNoOpPlaybackRepository)

@@ -26,5 +26,7 @@
     <string name="library_profile_subtitle_history">\@%1$s · recent trail</string>
 
     <!-- Snackbar shown when AuthRepository.session transitions to null mid-app. -->
-    <string name="library_session_expired">Your session expired. Please sign in again.</string>
+    <string name="library_logout_confirm_title">Log out?</string>
+    <string name="library_logout_confirm_message">This signs you out and clears your cached library, history, and downloads on this device.</string>
+    <string name="library_logout_cancel">Cancel</string>
 </resources>
