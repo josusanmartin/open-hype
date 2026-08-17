@@ -3,11 +3,21 @@
 [![build](https://github.com/josusanmartin/open-hype/actions/workflows/build.yml/badge.svg)](https://github.com/josusanmartin/open-hype/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![min sdk](https://img.shields.io/badge/min%20sdk-26-blue?logo=android&logoColor=white)](gradle.properties)
-[![target sdk](https://img.shields.io/badge/target%20sdk-35-blue?logo=android&logoColor=white)](gradle.properties)
+[![target sdk](https://img.shields.io/badge/target%20sdk-36-blue?logo=android&logoColor=white)](gradle.properties)
 
 Unofficial open-source Hype Machine client for Android phones and Android Auto / Automotive OS. Streams from `api.hypem.com` and exposes a Media3 `MediaLibraryService` so Android Auto can browse and play your Hype Machine library.
 
 > Not affiliated with or endorsed by Hype Machine.
+
+## Highlights
+
+- Browse Latest, Popular, Favorites, Feed, Playlists, History, blogs, tags, and users.
+- Play from a compact mini-player or an adaptive full player with dedicated portrait and landscape layouts.
+- Cache favorite tracks for offline listening with configurable storage limits and resilient background sync.
+- Use the car's native, driver-safe Media interface on Android Auto and Automotive OS; the app-owned AAOS screen is reserved for parked account and offline setup.
+- Keep favorites and account-backed data isolated across sign-in changes, with optimistic updates and server-confirmed rollback.
+- English and Spanish UI with screen-reader headings, announced error states, descriptive queue actions, and 48 dp minimum touch targets.
+- Baseline and Startup Profiles cover cold launch, catalog scrolling, Search, and Settings navigation.
 
 ## Screenshots
 
@@ -15,7 +25,7 @@ Unofficial open-source Hype Machine client for Android phones and Android Auto /
 
 | Latest | Player | Popular | Settings |
 | --- | --- | --- | --- |
-| <img src="docs/screenshots/phone-latest.png" width="180" alt="Latest screen with mode chips and like-on-card hearts" /> | <img src="docs/screenshots/phone-player.png" width="180" alt="Full-screen player with breathing warm halo and ambient bottom haze" /> | <img src="docs/screenshots/phone-popular.png" width="180" alt="Popular screen with rank numbers" /> | <img src="docs/screenshots/phone-settings.png" width="180" alt="Offline settings with storage slider and version footer" /> |
+| <img src="docs/screenshots/phone-latest.png" width="180" alt="Latest screen with mode chips and like-on-card hearts" /> | <img src="docs/screenshots/phone-player.png" width="180" alt="Full-screen player with a subtle artwork glow, queue, and transport controls" /> | <img src="docs/screenshots/phone-popular.png" width="180" alt="Popular screen with rank numbers" /> | <img src="docs/screenshots/phone-settings.png" width="180" alt="Offline settings with storage slider and version footer" /> |
 
 ### Android Auto / Automotive — system Media Templates
 
@@ -49,19 +59,20 @@ The heart in the Now Playing surface is a `CommandButton` that requests a second
 
 > Screenshots and demo above are projected Android Auto running on a real head unit in split-screen mode with Maps. Emulator QA still uses `AAOS_API_35` and launches `com.android.car.media` with `-a android.car.intent.action.MEDIA_TEMPLATE` against `dev.josu.hypecar/dev.josu.hypecar.auto.service.HypeMediaLibraryService`, but those captures are not used here because the emulator can show host chrome, placeholder art, and clipped template overlays that do not match real projection.
 
-### AAOS — Compose immersive UI (when launched directly)
+### AAOS — parked setup (when launched directly)
 
-When the user taps the app icon on AAOS (rather than going through the car's media app), they land in our Compose UI — a compact landscape variant of the phone layout.
+When the user taps the app icon on AAOS, Open Hype presents only account and offline setup. Browsing, search, queue management, and playback remain in the vehicle's native Media app so the driving experience follows the host's safety rules and interaction model.
 
-| Compose Settings |
+| Parked setup |
 | --- |
-| <img src="docs/screenshots/car-settings.png" width="280" alt="Compose-rendered offline settings on AAOS using pill-based storage limits for safer touch targets" /> |
+| <img src="docs/screenshots/car-setup.png" width="700" alt="Open Hype parked setup screen on Android Automotive OS with Sign in and Offline settings actions" /> |
 
 ## Modules
 
 ```
 app/                  Phone shell (Compose UI, navigation, mini-player chrome)
 auto/                 Media3 MediaLibraryService + MediaLibrarySession.Callback for AAOS / Auto
+baselineprofile/      Baseline Profile generation + startup/navigation Macrobenchmarks
 core/
   model/              Domain models, repository interfaces, coroutine helpers
   network/            Retrofit API + DTOs + auth interceptor
@@ -83,14 +94,15 @@ scripts/              Dev helpers (HypeM dev proxy, AAOS Wi-Fi reconnect)
 - **DI:** Hilt + KSP
 - **Data:** Room · DataStore (Preferences) · WorkManager (offline sync)
 - **Networking:** Retrofit · OkHttp · `okhttp-dnsoverhttps` fallback (`ResilientDns`) · `kotlinx.serialization`
-- **Playback:** Media3 ExoPlayer + `MediaLibrarySession`
+- **Playback:** Media3 1.10.1 ExoPlayer + `MediaLibrarySession`
 - **Images:** Coil
-- **Build:** AGP 8.7.3 · Kotlin 2.0.21 · JDK 17 · Gradle 8.10.2
-- **Testing:** JUnit4 · Truth · MockWebServer · Robolectric · Kotlinx Coroutines Test
+- **Build:** AGP 8.10.1 · Kotlin 2.0.21 · JDK 17 · Gradle 8.11.1
+- **Testing:** JUnit4 · Truth · MockWebServer · Robolectric · Kotlinx Coroutines Test · AndroidX Macrobenchmark
 - **Coverage:** Kover (`./gradlew koverHtmlReport` → `build/reports/kover/html/index.html`)
-- **CI:** GitHub Actions (`.github/workflows/build.yml`) — tests + lint + Kover + release packaging
+- **Performance:** generated Baseline + Startup Profiles packaged into release builds
+- **CI:** GitHub Actions (`.github/workflows/build.yml`) — formatting + architecture + debug/release tests + lint + Kover + R8 release packaging
 
-SDK levels (`gradle.properties`): `compileSdk=35`, `targetSdk=35`, `minSdk=26`.
+SDK levels (`gradle.properties`): `compileSdk=36`, `targetSdk=36`, `minSdk=26`.
 
 ## Building
 
@@ -100,14 +112,23 @@ Requires JDK 17. The Gradle wrapper handles everything else.
 # Run unit tests + lint (fast)
 ./gradlew testDebugUnitTest lintDebug
 
+# Run the complete local quality pipeline
+scripts/dev.sh ci
+
 # Build a debug APK
 ./gradlew :app:assembleDebug
 
 # Build Play-ready release artifacts (requires signing env vars)
-./gradlew :app:assembleRelease :app:bundleRelease
+./gradlew -PrequireReleaseSigning=true :app:assembleRelease :app:bundleRelease
 ```
 
 Outputs land in `app/build/outputs/`.
+
+To verify that the generated Baseline Profile is present in the optimized release APK without using a device:
+
+```bash
+scripts/dev.sh profile-check
+```
 
 ### Release signing
 
@@ -119,15 +140,17 @@ export HYPE_RELEASE_STORE_PASSWORD='...'
 export HYPE_RELEASE_KEY_ALIAS='...'
 export HYPE_RELEASE_KEY_PASSWORD='...'
 
-./gradlew clean testDebugUnitTest lintDebug bundleRelease
+./gradlew clean testDebugUnitTest lintDebug -PrequireReleaseSigning=true bundleRelease
 # → app/build/outputs/bundle/release/app-release.aab
 ```
 
-If the signing variables are absent locally, release packaging fails fast. On GitHub Actions, signed artifact packaging is skipped unless the release signing secrets are configured; tests and lint still run. Use `./gradlew :app:assembleDebug` for local installable builds.
+The Play-ready commands above pass `-PrequireReleaseSigning=true`, so missing signing variables fail fast. A plain Gradle release task may still produce an unsigned artifact for local R8 verification; never distribute that output. The GitHub release workflow also fails before publishing unless every release-signing secret is configured. Use `./gradlew :app:assembleDebug` for local installable builds.
 
 ## Running on Android Auto / AAOS
 
-The app declares an automotive media app (`res/xml/automotive_app_desc.xml` → `<uses name="media" />`) and a `HypeMediaLibraryService` that satisfies the AAOS browser tree contract.
+The app declares an automotive media app (`res/xml/automotive_app_desc.xml` → `<uses name="media" />`) and a `HypeMediaLibraryService` that satisfies the AAOS browser tree contract. The service explicitly opts into AAOS media-source discovery, so Open Hype appears in the native source picker after a sideload or install.
+
+Distribution note: the current unified artifact supports projected Android Auto and AAOS emulator/sideload testing, but it is not a Play-ready AAOS artifact. Google Play requires a dedicated automotive application build/track with `android.hardware.type.automotive` required, no phone launcher, and automotive-only metadata. Do not upload the current mobile bundle to an AAOS track.
 
 For AAOS emulator development, the `core:data` debug build enables `ENABLE_AAOS_DEV_PROXY`, which routes requests through `http://10.0.2.2:8787/v2/` when the runtime detects an automotive emulator. Run the proxy locally:
 
@@ -143,7 +166,7 @@ Release builds always go directly to `https://api.hypem.com/v2/`.
 - `HypeApiInterceptor` injects the auth token (`hm_token` query param) **only** for `api.hypem.com` and the dev proxy hosts.
 - The auth token is encrypted at rest with Android Keystore (AES-GCM) via `AndroidKeystoreSessionTokenCipher`; legacy plaintext tokens auto-migrate on first read.
 - `data_extraction_rules.xml` + `allowBackup="false"` exclude the session DataStore, Room DB, and shared prefs from cloud backup and device transfer.
-- `ResilientDns` falls back to DNS-over-HTTPS (Google, Cloudflare) when the system resolver throws `UnknownHostException` — useful on AAOS emulators that bring up a route before DNS.
+- In debug automotive-emulator proxy builds only, `ResilientDns` may fall back to DNS-over-HTTPS for Hype-owned hosts when the system resolver throws `UnknownHostException`. Release builds and unrelated hosts always use the system resolver.
 
 ## Permissions
 
@@ -152,16 +175,18 @@ Declared in `app/src/main/AndroidManifest.xml`:
 | Permission | Purpose |
 |---|---|
 | `INTERNET` | API calls |
+| `ACCESS_NETWORK_STATE` | Connectivity and offline-state feedback |
 | `WAKE_LOCK` | ExoPlayer `WAKE_MODE_NETWORK` for background streaming |
 | `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Media3 playback service |
-| `POST_NOTIFICATIONS` | Media notification on Android 13+ (requested only on phone, gated by `MediaNotificationPermissionPolicy`) |
+
+The app does not request `POST_NOTIFICATIONS`: Android exempts notifications tied to media sessions from that runtime permission, so prompting would add friction without enabling playback controls.
 
 ## Project layout conventions
 
 - App ID: `dev.josu.hypecar`. Module namespaces follow `dev.josu.hypecar.<module-path>`.
 - Public Hilt graph lives in `core/data/.../di/DataModule.kt`. Playback DI in `core/playback/.../di/PlaybackModule.kt`. App-level wiring in `app/.../AppPlaybackModule.kt`.
 - Repositories implement interfaces declared in `core:model`; UI features depend on `core:model` (and Hilt-provided implementations from `core:data`).
-- Errors are propagated via `Result<T>` / `runSuspendCatchingPreservingCancellation` (preserves `CancellationException`) — no `!!`, no `runBlocking` outside Media3 callback boundaries.
+- Errors are propagated via `Result<T>` / `runSuspendCatchingPreservingCancellation` (preserves `CancellationException`) — no `!!`, and no `runBlocking` outside unavoidable synchronous platform boundaries such as Media3 callbacks and OkHttp token interception.
 
 ## Releases
 
@@ -169,14 +194,13 @@ Published builds live on [GitHub Releases](https://github.com/josusanmartin/open
 
 ```bash
 scripts/dev.sh release
-#  dist/<version>/hype-car-<version>-debug-installable.apk
 #  dist/<version>/hype-car-<version>-release.apk
 #  dist/<version>/hype-car-<version>-release.aab
 ```
 
 ## Useful scripts
 
-- `scripts/dev.sh` — single dev-experience entry point: `check`, `ci`, `format`, `coverage`, `install`, `release`. Run with no args for the menu.
+- `scripts/dev.sh` — single dev-experience entry point: `check`, `ci`, `format`, `coverage`, `profile-check`, `install`, `release`. Run with no args for the menu.
 - `scripts/hypem_api_proxy.py` — local HTTP proxy that forwards to `https://api.hypem.com`, used for AAOS emulator dev.
 - `scripts/aaos_reconnect_wifi.sh` — reconnects the AAOS emulator to the host Wi-Fi (works around emulator network flakes).
 
@@ -188,6 +212,7 @@ scripts/dev.sh release
 | [`CHANGELOG.md`](CHANGELOG.md) | Per-version release notes |
 | [`SECURITY.md`](SECURITY.md) | Coordinated-disclosure policy for vulnerability reports |
 | [`RELEASE.md`](RELEASE.md) | Release-checklist (signing, Play Store metadata) |
+| [`baselineprofile/README.md`](baselineprofile/README.md) | Profile generation, packaging checks, and benchmark usage |
 | [`LICENSE`](LICENSE) | MIT |
 
 ## License / disclaimer

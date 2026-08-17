@@ -18,6 +18,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.await
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.MeRepository
@@ -26,17 +27,23 @@ import dev.josu.hypecar.core.model.repository.OfflineRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -48,6 +55,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -55,12 +63,14 @@ import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
 
 @Singleton
-class DefaultOfflineRepository @Inject constructor(
+internal class DefaultOfflineRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val meRepository: MeRepository,
     private val client: OkHttpClient,
     private val json: Json,
-) : OfflineRepository {
+    private val accountDataWriteGate: AccountDataWriteGate = AccountDataWriteGate(),
+) : OfflineRepository,
+    OfflineSyncAttemptRunner {
     private companion object {
         const val Tag = "OfflineRepository"
         const val OneTimeWorkName = "offline-favorites-sync-now"
@@ -96,10 +106,24 @@ class DefaultOfflineRepository @Inject constructor(
 
     @Volatile
     private var recordsByTrackId: Map<String, OfflineTrackRecord> = emptyMap()
+
+    /** Serializes filesystem/DataStore mutations against quota trims and clears. */
     private val syncMutex = Mutex()
 
-    @Volatile
-    private var activeSyncJob: Job? = null
+    /** Keeps explicit settings and filesystem mutations in one total order. */
+    private val adminMutex = Mutex()
+
+    /** Serializes unique-work repair without delaying foreground sync waiters. */
+    private val scheduledWorkMutex = Mutex()
+
+    /** Protects the shared attempt reference without holding a lock during IO. */
+    private val activeSyncMutex = Mutex()
+    private var activeSyncAttempt: SharedSyncAttempt? = null
+
+    private class SharedSyncAttempt(
+        val deferred: Deferred<OfflineSyncAttemptResult>,
+        var waiterCount: Int = 0,
+    )
 
     override val status: StateFlow<OfflineDownloadStatus> = _status
 
@@ -107,8 +131,14 @@ class DefaultOfflineRepository @Inject constructor(
         scope.launch {
             dataStore.data
                 .catch { emit(emptyPreferences()) }
-                .collect { prefs ->
-                    val records = decodeRecords(prefs[recordsKey])
+                .combine(accountDataWriteGate.accountBoundary) { prefs, boundary -> prefs to boundary }
+                .collect { (prefs, boundary) ->
+                    if (!boundary.isActive) {
+                        recordsByTrackId = emptyMap()
+                        _status.value = OfflineDownloadStatus()
+                        return@collect
+                    }
+                    val records = reconcileRecords(decodeRecords(prefs[recordsKey]))
                     recordsByTrackId = records.associateBy { it.trackId }
                     _status.update { current ->
                         current.copy(
@@ -121,60 +151,166 @@ class DefaultOfflineRepository @Inject constructor(
                     }
                 }
         }
+        scope.launch {
+            dataStore.data
+                .map { prefs -> Result.success(prefs[enabledKey] == true) }
+                .catch { error ->
+                    // An unreadable preference is not proof that offline mode
+                    // is disabled. Preserve existing work and retry after the
+                    // next state transition/process start.
+                    Log.w(Tag, "Could not read offline state for work reconciliation", error)
+                    emit(Result.failure(error))
+                }
+                .combine(accountDataWriteGate.accountBoundary) { enabledResult, boundary ->
+                    // The production gate starts inactive until session
+                    // persistence has been read. Do not cancel valid periodic
+                    // work during that brief, uninitialized boundary.
+                    val persistedEnabled = enabledResult.getOrNull()
+                    if (persistedEnabled == null || (!boundary.isActive && boundary.generation == 0L)) {
+                        null
+                    } else {
+                        boundary.isActive && persistedEnabled
+                    }
+                }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collect {
+                    try {
+                        reconcileScheduledWork()
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (error: Throwable) {
+                        // WorkManager normally initializes before repositories,
+                        // but a failed reconciliation must not take down status.
+                        // A later preference/account transition or process start
+                        // will retry the idempotent unique-work operation.
+                        Log.w(Tag, "Failed to reconcile offline sync work", error)
+                    }
+                }
+        }
     }
 
     override suspend fun setEnabled(enabled: Boolean) {
-        dataStore.edit { prefs ->
-            prefs[enabledKey] = enabled
-            if (prefs[quotaBytesKey] == null) {
-                prefs[quotaBytesKey] = DefaultQuotaBytes
+        val generation = accountDataWriteGate.captureGeneration()
+        runAdminTransaction {
+            requireCurrentAccount(generation)
+            dataStore.edit { prefs ->
+                prefs[enabledKey] = enabled
+                if (prefs[quotaBytesKey] == null) {
+                    prefs[quotaBytesKey] = DefaultQuotaBytes
+                }
             }
-        }
-        if (enabled) {
-            enqueuePeriodicSync()
-            enqueueImmediateSync()
-        } else {
-            WorkManager.getInstance(context).cancelUniqueWork(OneTimeWorkName)
-            WorkManager.getInstance(context).cancelUniqueWork(PeriodicWorkName)
-            activeSyncJob?.cancel()
+            _status.update { current -> current.copy(isEnabled = enabled) }
+            scheduledWorkMutex.withLock {
+                if (enabled) {
+                    enqueuePeriodicSync()
+                    enqueueImmediateSync()
+                } else {
+                    cancelScheduledSync()
+                }
+            }
         }
     }
 
     override suspend fun setQuotaBytes(quotaBytes: Long) {
+        val generation = accountDataWriteGate.captureGeneration()
         val sanitized = quotaBytes.coerceAtLeast(50L * 1024L * 1024L)
-        dataStore.edit { prefs -> prefs[quotaBytesKey] = sanitized }
-        // Serialize with any running sync: a concurrent sync's final save would
-        // otherwise resurrect records for the files trim just deleted.
-        activeSyncJob?.cancelAndJoin()
-        syncMutex.withLock { trimToQuota(sanitized) }
-        if (_status.value.isEnabled) {
-            enqueueImmediateSync()
+        runAdminTransaction {
+            requireCurrentAccount(generation)
+            val updatedPreferences = dataStore.edit { prefs -> prefs[quotaBytesKey] = sanitized }
+            _status.update { current -> current.copy(quotaBytes = sanitized) }
+            trimToQuota(sanitized)
+            if (updatedPreferences[enabledKey] == true) {
+                scheduledWorkMutex.withLock { enqueueImmediateSync() }
+            }
         }
     }
 
     override suspend fun syncFavorites() {
-        if (!syncMutex.tryLock()) return
-        try {
-            coroutineScope {
-                val job = launch { syncFavoritesLocked() }
-                activeSyncJob = job
-                job.join()
+        runSyncAttempt()
+    }
+
+    /** Concurrent callers await the same in-flight attempt and receive its exact result. */
+    override suspend fun runSyncAttempt(): OfflineSyncAttemptResult {
+        val generation = accountDataWriteGate.captureGeneration()
+        if (!accountDataWriteGate.isCurrentAccount(generation)) {
+            return OfflineSyncAttemptResult.Failure(
+                message = "Offline sync requires an active account",
+                retryable = false,
+            )
+        }
+        val attempt = adminMutex.withLock {
+            requireCurrentAccount(generation)
+            activeSyncMutex.withLock {
+                val shared = activeSyncAttempt
+                    ?.takeUnless { it.deferred.isCompleted }
+                    ?: SharedSyncAttempt(
+                        deferred = scope.async(start = CoroutineStart.LAZY) {
+                            syncMutex.withLock { syncFavoritesLocked() }
+                        },
+                    ).also { created ->
+                        activeSyncAttempt = created
+                    }
+                shared.waiterCount += 1
+                shared
             }
+        }
+
+        attempt.deferred.start()
+        return try {
+            attempt.deferred.await()
         } finally {
-            activeSyncJob = null
-            syncMutex.unlock()
+            releaseSyncWaiter(attempt)
         }
     }
 
-    private suspend fun syncFavoritesLocked() {
-        val prefs = dataStore.data.first()
-        if (prefs[enabledKey] != true) return
+    /** A repository-owned attempt only outlives a caller while another caller still awaits it. */
+    private suspend fun releaseSyncWaiter(attempt: SharedSyncAttempt) =
+        withContext(NonCancellable) {
+            activeSyncMutex.withLock {
+                check(attempt.waiterCount > 0) { "Offline sync waiter released more than once" }
+                attempt.waiterCount -= 1
+                if (attempt.waiterCount == 0) {
+                    if (activeSyncAttempt === attempt) {
+                        activeSyncAttempt = null
+                    }
+                    if (!attempt.deferred.isCompleted) {
+                        attempt.deferred.cancelAndJoin()
+                    }
+                }
+            }
+        }
+
+    /**
+     * Blocks new registrations for the whole transaction, but never waits for
+     * cancellation while holding activeSyncMutex: a cancelled worker must be
+     * able to unregister its waiter before WorkManager reports cancellation.
+     */
+    private suspend fun <T> runAdminTransaction(block: suspend () -> T): T =
+        adminMutex.withLock {
+            val detachedAttempt = activeSyncMutex.withLock {
+                activeSyncAttempt.also { activeSyncAttempt = null }
+            }
+            detachedAttempt?.deferred?.cancelAndJoin()
+            syncMutex.withLock { block() }
+        }
+
+    private suspend fun syncFavoritesLocked(): OfflineSyncAttemptResult {
+        val prefsResult = runSuspendCatchingPreservingCancellation { dataStore.data.first() }
+        val prefs = prefsResult.getOrElse { error ->
+            return publishSyncFailure(error)
+        }
+        if (prefs[enabledKey] != true) return OfflineSyncAttemptResult.Success
         val quotaBytes = prefs[quotaBytesKey] ?: DefaultQuotaBytes
 
         _status.update { it.copy(isSyncing = true, error = null) }
         try {
             val result = runSuspendCatchingPreservingCancellation {
-                val existingRecords = decodeRecords(prefs[recordsKey])
+                val decodedRecords = decodeRecords(prefs[recordsKey])
+                val existingRecords = reconcileRecords(decodedRecords)
+                if (existingRecords != decodedRecords) {
+                    saveRecords(existingRecords, lastSyncedAt = null)
+                }
                 cleanupStrayFiles(existingRecords)
                 val accumulator = OfflineSyncAccumulator(
                     quotaBytes = quotaBytes,
@@ -182,6 +318,7 @@ class DefaultOfflineRepository @Inject constructor(
                 )
                 val recordPersistBatcher = OfflineRecordPersistBatcher(batchSize = RecordPersistBatchSize)
                 val seenFavorites = mutableSetOf<String>()
+                val downloadFailures = mutableListOf<OfflineTrackDownloadResult.Failed>()
                 var allFavoritesScanned = false
 
                 try {
@@ -206,15 +343,21 @@ class DefaultOfflineRepository @Inject constructor(
                             if (accumulator.contains(track.id)) continue
                             if (!accumulator.shouldDownloadNext()) continue
                             val remainingBytes = (quotaBytes - accumulator.usedBytes).coerceAtLeast(0L)
-                            val record = downloadTrack(track, remainingBytes) ?: continue
-                            val records = accumulator.recordDownloaded(record)
-                            if (records != null) {
-                                if (recordPersistBatcher.recordDownloaded()) {
-                                    saveRecords(records, lastSyncedAt = null)
-                                    recordPersistBatcher.markPersisted()
+                            when (val download = downloadTrack(track, remainingBytes)) {
+                                is OfflineTrackDownloadResult.Downloaded -> {
+                                    val records = accumulator.recordDownloaded(download.record)
+                                    if (records != null) {
+                                        if (recordPersistBatcher.recordDownloaded()) {
+                                            saveRecords(records, lastSyncedAt = null)
+                                            recordPersistBatcher.markPersisted()
+                                        }
+                                    } else {
+                                        File(cacheDir(), download.record.fileName).delete()
+                                    }
                                 }
-                            } else {
-                                File(cacheDir(), record.fileName).delete()
+
+                                is OfflineTrackDownloadResult.Failed -> downloadFailures += download
+                                OfflineTrackDownloadResult.SkippedForQuota -> Unit
                             }
                         }
 
@@ -242,10 +385,34 @@ class DefaultOfflineRepository @Inject constructor(
                         emptySet()
                     },
                 )
-                saveRecords(trimmed, lastSyncedAt = nowSeconds())
+                if (downloadFailures.isEmpty()) {
+                    saveRecords(trimmed, lastSyncedAt = nowSeconds())
+                    OfflineSyncAttemptResult.Success
+                } else {
+                    // Successful downloads remain useful, but the attempt did
+                    // not fully synchronize the eligible favorites. Leaving
+                    // lastSyncedAt untouched prevents a partial cache from
+                    // being presented as a completed sync.
+                    saveRecords(trimmed, lastSyncedAt = null)
+                    downloadFailures.toAttemptFailure()
+                }
             }
 
-            _status.update { it.copy(isSyncing = false, error = result.exceptionOrNull()?.message) }
+            return result.fold(
+                onSuccess = { attempt ->
+                    when (attempt) {
+                        OfflineSyncAttemptResult.Success -> {
+                            _status.update { it.copy(isSyncing = false, error = null) }
+                        }
+
+                        is OfflineSyncAttemptResult.Failure -> {
+                            _status.update { it.copy(isSyncing = false, error = attempt.message) }
+                        }
+                    }
+                    attempt
+                },
+                onFailure = ::publishSyncFailure,
+            )
         } finally {
             // Cancellation rethrows past the block above (navigating away from
             // Settings, toggling offline off, a REPLACEd worker); without this
@@ -259,43 +426,94 @@ class DefaultOfflineRepository @Inject constructor(
         }
     }
 
+    private fun publishSyncFailure(error: Throwable): OfflineSyncAttemptResult.Failure {
+        val message = error.offlineSyncFailureMessage()
+        _status.update { it.copy(isSyncing = false, error = message) }
+        return OfflineSyncAttemptResult.Failure(
+            message = message,
+            retryable = error.isRetryableOfflineSyncFailure(),
+        )
+    }
+
     private suspend fun isStillEnabled(): Boolean =
-        runCatching { dataStore.data.first()[enabledKey] == true }.getOrDefault(false)
+        runSuspendCatchingPreservingCancellation {
+            dataStore.data.first()[enabledKey] == true
+        }.getOrDefault(false)
 
     override suspend fun clearDownloads() {
-        activeSyncJob?.cancelAndJoin()
-        syncMutex.withLock {
-            withContext(Dispatchers.IO) {
-                cacheDir().listFiles()?.forEach { it.delete() }
-            }
+        val generation = accountDataWriteGate.captureGeneration()
+        runAdminTransaction {
+            requireCurrentAccount(generation)
+            deleteAllCachedFiles()
             saveRecords(emptyList(), lastSyncedAt = _status.value.lastSyncedAtEpochSeconds)
         }
     }
 
+    override suspend fun clearAccountData() {
+        runAdminTransaction {
+            val workManager = WorkManager.getInstance(context)
+            scheduledWorkMutex.withLock { cancelScheduledSync(workManager) }
+            // Keep the manifest and settings intact until every file is gone.
+            // The session wiper treats this exception as cleanup-pending and
+            // retries before another account can become active.
+            deleteAllCachedFiles()
+            dataStore.edit { prefs -> prefs.clear() }
+            recordsByTrackId = emptyMap()
+            _status.value = OfflineDownloadStatus()
+        }
+    }
+
     override fun cachedAudioUri(trackId: String): String? {
+        if (!accountDataWriteGate.isActive()) return null
         if (!_status.value.isEnabled) return null
         val record = recordsByTrackId[trackId] ?: return null
         val file = File(cacheDir(), record.fileName)
         return file.takeIf { it.exists() && it.length() > 0L }?.let { Uri.fromFile(it).toString() }
     }
 
-    private fun enqueueImmediateSync() {
+    private suspend fun enqueueImmediateSync() {
         val request = OneTimeWorkRequestBuilder<OfflineFavoritesSyncWorker>()
             .setConstraints(SyncConstraints)
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(OneTimeWorkName, ExistingWorkPolicy.REPLACE, request)
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(OneTimeWorkName, ExistingWorkPolicy.REPLACE, request)
+            .await()
     }
 
-    private fun enqueuePeriodicSync() {
+    private suspend fun enqueuePeriodicSync() {
         val request = PeriodicWorkRequestBuilder<OfflineFavoritesSyncWorker>(6, TimeUnit.HOURS)
             .setConstraints(SyncConstraints)
             .setInitialDelay(6, TimeUnit.HOURS)
             .build()
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            PeriodicWorkName,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request,
-        )
+        WorkManager.getInstance(context)
+            .enqueueUniquePeriodicWork(
+                PeriodicWorkName,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                request,
+            ).await()
+    }
+
+    /** Repairs preference/work registration after process death without starting network IO. */
+    private suspend fun reconcileScheduledWork() {
+        scheduledWorkMutex.withLock {
+            // Re-read while holding the same lock as explicit scheduling. The
+            // flow event may be stale by the time WorkManager becomes writable.
+            val enabled = accountDataWriteGate.isActive() && dataStore.data.first()[enabledKey] == true
+            if (enabled) {
+                // Periodic work has a six-hour initial delay. Startup never
+                // recreates immediate work merely by constructing this repo.
+                enqueuePeriodicSync()
+            } else {
+                cancelScheduledSync()
+            }
+        }
+    }
+
+    private suspend fun cancelScheduledSync(
+        workManager: WorkManager = WorkManager.getInstance(context),
+    ) {
+        workManager.cancelUniqueWork(OneTimeWorkName).await()
+        workManager.cancelUniqueWork(PeriodicWorkName).await()
     }
 
     private suspend fun trimToQuota(quotaBytes: Long) {
@@ -322,78 +540,157 @@ class DefaultOfflineRepository @Inject constructor(
         }
     }
 
+    private fun requireCurrentAccount(generation: AccountDataWriteGate.Generation) {
+        check(accountDataWriteGate.isCurrentAccount(generation)) {
+            "Offline settings require the same active account"
+        }
+    }
+
     private fun trimRecordsToQuota(
         records: List<OfflineTrackRecord>,
         quotaBytes: Long,
         staleTrackIds: Set<String> = emptySet(),
     ): List<OfflineTrackRecord> {
         val plan = OfflineEvictionPlanner.plan(records, quotaBytes, staleTrackIds)
-        plan.evicted.forEach { File(cacheDir(), it.fileName).delete() }
-        return plan.kept
+        return OfflineEvictionPlanCommitter.commit(plan) { record ->
+            val file = File(cacheDir(), record.fileName)
+            runCatching { file.delete() }
+            // File.delete() can report success incorrectly on unusual storage;
+            // the manifest may only forget bytes proven to be gone.
+            !runCatching { file.exists() }.getOrDefault(true)
+        }
     }
 
-    private suspend fun downloadTrack(track: Track, maxBytes: Long): OfflineTrackRecord? =
+    private suspend fun downloadTrack(track: Track, maxBytes: Long): OfflineTrackDownloadResult =
         withContext(Dispatchers.IO) {
-            if (maxBytes <= 0L) return@withContext null
+            if (maxBytes <= 0L) return@withContext OfflineTrackDownloadResult.SkippedForQuota
             val target = File(cacheDir(), "${track.id.safeFileName()}.audio")
             val temp = File(cacheDir(), "${target.name}.tmp")
             temp.delete()
             val request = Request.Builder().url(track.streamUrl()).build()
-            runSuspendCatchingPreservingCancellation {
-                try {
-                    downloadTo(temp, request, maxBytes)
-                } catch (cancellation: CancellationException) {
-                    temp.delete()
-                    throw cancellation
-                }?.let { bytesWritten ->
-                    if (target.exists()) target.delete()
-                    if (!temp.renameTo(target)) {
-                        temp.delete()
-                        return@runSuspendCatchingPreservingCancellation null
+            try {
+                when (val download = downloadTo(temp, request, maxBytes)) {
+                    is OfflineBodyDownloadResult.Complete -> {
+                        if (target.exists() && !target.delete()) {
+                            temp.delete()
+                            return@withContext OfflineTrackDownloadResult.Failed(
+                                message = "Offline audio could not be replaced",
+                                retryable = true,
+                            )
+                        }
+                        if (!temp.renameTo(target)) {
+                            temp.delete()
+                            return@withContext OfflineTrackDownloadResult.Failed(
+                                message = "Offline audio could not be stored",
+                                retryable = true,
+                            )
+                        }
+                        val now = nowSeconds()
+                        OfflineTrackDownloadResult.Downloaded(
+                            OfflineTrackRecord(
+                                trackId = track.id,
+                                fileName = target.name,
+                                byteSize = download.bytesWritten,
+                                downloadedAtEpochSeconds = now,
+                            ),
+                        )
                     }
-                    val now = nowSeconds()
-                    OfflineTrackRecord(
-                        trackId = track.id,
-                        fileName = target.name,
-                        byteSize = bytesWritten,
-                        downloadedAtEpochSeconds = now,
-                    )
+
+                    is OfflineBodyDownloadResult.Failed -> download.toTrackFailure()
+                    OfflineBodyDownloadResult.ExceedsQuota -> OfflineTrackDownloadResult.SkippedForQuota
                 }
-            }.onFailure {
+            } catch (cancellation: CancellationException) {
                 temp.delete()
-                Log.w(Tag, "Failed to download offline track ${track.id}", it)
-            }.getOrNull()
+                throw cancellation
+            } catch (error: Throwable) {
+                temp.delete()
+                // OkHttp reports Call.cancel() as IOException; restore the
+                // coroutine's cancellation instead of publishing it as a sync failure.
+                coroutineContext.ensureActive()
+                Log.w(Tag, "Failed to download offline track ${track.id}", error)
+                OfflineTrackDownloadResult.Failed(
+                    message = error.offlineSyncFailureMessage(),
+                    retryable = error.isRetryableOfflineSyncFailure(),
+                )
+            }
         }
 
-    /** Streams [request]'s body into [temp]; returns bytes written, or null when skipped/aborted. */
-    private suspend fun downloadTo(temp: File, request: Request, maxBytes: Long): Long? =
-        downloadClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            val body = response.body ?: return@use null
-            var bytesWritten = 0L
-            temp.outputStream().use { output ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        // Without this check, cancelling the sync (toggle off,
-                        // quota change) would silently wait out the transfer.
-                        coroutineContext.ensureActive()
-                        val read = input.read(buffer)
-                        if (read == -1) break
-                        bytesWritten += read
-                        if (bytesWritten > maxBytes) {
-                            temp.delete()
-                            return@use null
+    /** Streams [request]'s body into [temp] without conflating quota skips with failures. */
+    private suspend fun downloadTo(
+        temp: File,
+        request: Request,
+        maxBytes: Long,
+    ): OfflineBodyDownloadResult {
+        val call = downloadClient.newCall(request)
+        coroutineContext.ensureActive()
+        // execute() and ResponseBody reads are blocking. Canceling the Call is
+        // what closes the socket and lets the IO thread observe Job cancellation.
+        // A child Job completes as soon as its parent starts cancelling; a
+        // regular parent completion handler would run too late for blocked IO.
+        val cancellationHook = Job(parent = coroutineContext[Job])
+        val cancellationHandle = cancellationHook.invokeOnCompletion {
+            if (cancellationHook.isCancelled) call.cancel()
+        }
+        try {
+            return call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@use OfflineBodyDownloadResult.Failed(
+                        message = "Offline audio request failed (HTTP ${response.code})",
+                        retryable = response.code == 408 || response.code == 429 || response.code >= 500,
+                    )
+                }
+                val body = response.body
+                    ?: return@use OfflineBodyDownloadResult.Failed(
+                        message = "Offline audio response was missing a body",
+                        retryable = false,
+                    )
+                var bytesWritten = 0L
+                temp.outputStream().use { output ->
+                    body.byteStream().use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val read = input.read(buffer)
+                            if (read == -1) break
+                            bytesWritten += read
+                            if (bytesWritten > maxBytes) {
+                                temp.delete()
+                                return@use OfflineBodyDownloadResult.ExceedsQuota
+                            }
+                            output.write(buffer, 0, read)
                         }
-                        output.write(buffer, 0, read)
                     }
                 }
+                if (bytesWritten <= 0L) {
+                    temp.delete()
+                    OfflineBodyDownloadResult.Failed(
+                        message = "Offline audio response was empty",
+                        retryable = false,
+                    )
+                } else {
+                    OfflineBodyDownloadResult.Complete(bytesWritten)
+                }
             }
-            if (bytesWritten <= 0L) {
-                temp.delete()
-                null
-            } else {
-                bytesWritten
+        } finally {
+            cancellationHandle.dispose()
+            cancellationHook.complete()
+        }
+    }
+
+    /** Deletes the cache as an all-or-retry manifest transition. */
+    private suspend fun deleteAllCachedFiles() =
+        withContext(Dispatchers.IO) {
+            val files = cacheDir().listFiles()
+                ?: throw IOException("Offline audio directory could not be read")
+            var failedDeletionCount = 0
+            files.forEach { file ->
+                coroutineContext.ensureActive()
+                runCatching { file.delete() }
+                val stillExists = runCatching { file.exists() }.getOrDefault(true)
+                if (stillExists) failedDeletionCount += 1
+            }
+            if (failedDeletionCount > 0) {
+                throw IOException("Could not delete $failedDeletionCount offline audio item(s)")
             }
         }
 
@@ -413,12 +710,88 @@ class DefaultOfflineRepository @Inject constructor(
             ?.forEach { it.delete() }
     }
 
+    /**
+     * Preferences are only a manifest, not proof that audio still exists.
+     * Remove records whose file was deleted, truncated, tampered with, or
+     * points outside the private offline directory so the next sync can
+     * download the track again.
+     */
+    private fun reconcileRecords(records: List<OfflineTrackRecord>): List<OfflineTrackRecord> {
+        val directory = cacheDir().canonicalFile
+        val seenTrackIds = mutableSetOf<String>()
+        return records.filter { record ->
+            val file = try {
+                File(directory, record.fileName).canonicalFile
+            } catch (exception: Exception) {
+                Log.w(Tag, "Ignoring malformed offline record for ${record.trackId}", exception)
+                return@filter false
+            }
+            val isSafePath = file.parentFile == directory
+            val hasValidFile = isSafePath &&
+                record.trackId.isNotBlank() &&
+                record.byteSize > 0L &&
+                file.isFile &&
+                file.length() == record.byteSize
+            val isUnique = hasValidFile && seenTrackIds.add(record.trackId)
+            if (!hasValidFile && isSafePath) {
+                file.delete()
+            }
+            hasValidFile && isUnique
+        }
+    }
+
     private fun decodeRecords(raw: String?): List<OfflineTrackRecord> =
         raw?.let {
             runCatching {
                 json.decodeFromString(ListSerializer(OfflineTrackRecord.serializer()), it)
             }.getOrNull()
         }.orEmpty()
+
+    /** Stops repository-owned observers; production keeps the singleton alive for the process. */
+    internal suspend fun shutdown() {
+        scope.coroutineContext[Job]?.cancelAndJoin()
+    }
+}
+
+private sealed interface OfflineBodyDownloadResult {
+    data class Complete(val bytesWritten: Long) : OfflineBodyDownloadResult
+
+    data class Failed(
+        val message: String,
+        val retryable: Boolean,
+    ) : OfflineBodyDownloadResult
+
+    data object ExceedsQuota : OfflineBodyDownloadResult
+}
+
+private sealed interface OfflineTrackDownloadResult {
+    data class Downloaded(val record: OfflineTrackRecord) : OfflineTrackDownloadResult
+
+    data class Failed(
+        val message: String,
+        val retryable: Boolean,
+    ) : OfflineTrackDownloadResult
+
+    data object SkippedForQuota : OfflineTrackDownloadResult
+}
+
+private fun OfflineBodyDownloadResult.Failed.toTrackFailure() =
+    OfflineTrackDownloadResult.Failed(
+        message = message,
+        retryable = retryable,
+    )
+
+private fun List<OfflineTrackDownloadResult.Failed>.toAttemptFailure(): OfflineSyncAttemptResult.Failure {
+    val firstFailure = first()
+    val message = if (size == 1) {
+        firstFailure.message
+    } else {
+        "$size offline audio downloads failed; ${firstFailure.message}"
+    }
+    return OfflineSyncAttemptResult.Failure(
+        message = message,
+        retryable = any(OfflineTrackDownloadResult.Failed::retryable),
+    )
 }
 
 internal class OfflineDownloadPlanner(
@@ -530,6 +903,16 @@ internal object OfflineEvictionPlanner {
             usedBytes -= removed.byteSize
         }
         return Plan(kept = keep, evicted = evicted)
+    }
+}
+
+internal object OfflineEvictionPlanCommitter {
+    fun commit(
+        plan: OfflineEvictionPlanner.Plan,
+        delete: (OfflineTrackRecord) -> Boolean,
+    ): List<OfflineTrackRecord> {
+        val undeleted = plan.evicted.filterNot(delete)
+        return plan.kept + undeleted
     }
 }
 

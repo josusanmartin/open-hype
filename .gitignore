@@ -14,6 +14,8 @@ captures
 *.apk
 *.aab
 *.aar
+__pycache__/
+*.py[cod]
 
 # Local config + secrets
 local.properties

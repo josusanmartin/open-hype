@@ -15,6 +15,9 @@ interface SessionTokenCipher {
     fun decrypt(cipherText: String): String?
 
     fun isEncrypted(value: String): Boolean
+
+    /** Invalidates encrypted credentials when their preference file cannot be edited. */
+    fun invalidate() = Unit
 }
 
 class SessionTokenCodec(
@@ -31,6 +34,8 @@ class SessionTokenCodec(
 
     fun needsMigration(storedToken: String): Boolean =
         storedToken.isNotBlank() && !cipher.isEncrypted(storedToken)
+
+    fun invalidate() = cipher.invalidate()
 }
 
 class AndroidKeystoreSessionTokenCipher : SessionTokenCipher {
@@ -64,6 +69,11 @@ class AndroidKeystoreSessionTokenCipher : SessionTokenCipher {
         }.getOrNull()
 
     override fun isEncrypted(value: String): Boolean = value.startsWith(Prefix)
+
+    override fun invalidate() {
+        val keyStore = KeyStore.getInstance(AndroidKeyStore).apply { load(null) }
+        if (keyStore.containsAlias(Alias)) keyStore.deleteEntry(Alias)
+    }
 
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(AndroidKeyStore).apply { load(null) }

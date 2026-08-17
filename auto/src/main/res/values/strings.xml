@@ -18,18 +18,18 @@
     <string name="auto_section_history_subtitle">Recently played</string>
 
     <!-- Sign-in prompt shown when an authenticated section is browsed without a session. -->
-    <string name="auto_signin_title">Sign in on your phone</string>
-    <string name="auto_signin_subtitle">Open Hype on your phone to use Favorites, Feed and Playlists.</string>
-    <string name="auto_private_unavailable_title">Open Hype on your phone</string>
-    <string name="auto_private_unavailable_subtitle">Refresh your session or connection, then try this section again.</string>
+    <string name="auto_signin_title">Sign in when parked</string>
+    <string name="auto_signin_subtitle">When parked, open Hype on your phone to use Favorites, Feed and Playlists.</string>
+    <string name="auto_private_unavailable_title">Open Hype when parked</string>
+    <string name="auto_private_unavailable_subtitle">When parked, refresh your session or connection, then try this section again.</string>
 
     <!-- Empty-state items for sections that return zero rows. -->
     <string name="auto_empty_favorites_title">No favorites yet</string>
-    <string name="auto_empty_favorites_subtitle">Open Hype on your phone to start loving tracks.</string>
+    <string name="auto_empty_favorites_subtitle">When parked, open Hype on your phone to start loving tracks.</string>
     <string name="auto_empty_feed_title">Nothing in your feed</string>
     <string name="auto_empty_feed_subtitle">Follow blogs or users to populate your feed.</string>
     <string name="auto_empty_playlists_title">No playlists yet</string>
-    <string name="auto_empty_playlists_subtitle">Create a playlist on the phone to listen here.</string>
+    <string name="auto_empty_playlists_subtitle">When parked, create a playlist on the phone to listen here.</string>
     <string name="auto_empty_history_title">No recent listens</string>
     <string name="auto_empty_history_subtitle">Tracks you play will appear here.</string>
     <string name="auto_empty_generic_title">Nothing here yet</string>

@@ -81,7 +81,7 @@ class LibraryViewModelTest {
     }
 
     @Test
-    fun `history tab works without a session`() = runTest {
+    fun `history tab stays private while signed out`() = runTest {
         val sessionFlow = MutableStateFlow<AuthSession?>(null)
         val me = ScriptedMeRepository(history = listOf(track("h1"), track("h2")))
         val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository, favoriteSyncManager(me))
@@ -90,7 +90,65 @@ class LibraryViewModelTest {
         vm.selectTab(LibraryTab.HISTORY.ordinal)
         advanceUntilIdle()
 
-        assertThat(vm.state.value.tracks.map { it.id }).containsExactly("h1", "h2").inOrder()
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(me.historyCalls).isEqualTo(0)
+    }
+
+    @Test
+    fun `logout clears loaded history before account-data cleanup can finish`() = runTest {
+        val sessionFlow = MutableStateFlow<AuthSession?>(AuthSession("alice", "old-token"))
+        val me = ScriptedMeRepository(history = listOf(track("h1"), track("h2")))
+        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository, favoriteSyncManager(me))
+        advanceUntilIdle()
+        vm.selectTab(LibraryTab.HISTORY.ordinal)
+        advanceUntilIdle()
+        assertThat(vm.state.value.tracks.map(Track::id)).containsExactly("h1", "h2").inOrder()
+
+        sessionFlow.value = null
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.session).isNull()
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(me.historyCalls).isEqualTo(1)
+    }
+
+    @Test
+    fun `logout cleanup failure is surfaced even after session becomes signed out`() = runTest {
+        val sessionFlow = MutableStateFlow<AuthSession?>(AuthSession("alice", "old-token"))
+        val auth = StubAuthRepository(sessionFlow, logoutFailure = IllegalStateException("wipe failed"))
+        val me = ScriptedMeRepository(favorites = listOf(track("a")))
+        val vm = LibraryViewModel(auth, me, NoOpPlaybackRepository, favoriteSyncManager(me))
+        advanceUntilIdle()
+
+        vm.logout()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.session).isNull()
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(vm.state.value.logoutFailed).isTrue()
+    }
+
+    @Test
+    fun `account switch clears old tracks even when the new account refresh fails`() = runTest {
+        val sessionFlow = MutableStateFlow<AuthSession?>(AuthSession("account-a", "token-a"))
+        val me = ScriptedMeRepository(
+            favoritesSequence = listOf(
+                Result.success(listOf(track("account-a-track"))),
+                Result.failure(RuntimeException("account B unavailable")),
+            ),
+        )
+        val vm = LibraryViewModel(StubAuthRepository(sessionFlow), me, NoOpPlaybackRepository, favoriteSyncManager(me))
+        advanceUntilIdle()
+        assertThat(vm.state.value.tracks.map(Track::id)).containsExactly("account-a-track")
+
+        sessionFlow.value = AuthSession("account-b", "token-b")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.session).isEqualTo(AuthSession("account-b", "token-b"))
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(vm.state.value.playlists).isEmpty()
+        assertThat(vm.state.value.selectedPlaylistId).isNull()
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Unknown)
     }
 
     @Test
@@ -131,6 +189,31 @@ class LibraryViewModelTest {
         assertThat(vm.state.value.tracks).hasSize(60)
         assertThat(vm.state.value.nextPage).isEqualTo(3)
         assertThat(vm.state.value.loadingMore).isFalse()
+    }
+
+    @Test
+    fun `favorites loadMore de-duplicates an overlapping page`() = runTest {
+        val page1 = (1..30).map { track("track-$it") }
+        val page2 = listOf(track("track-30").copy(title = "fresh overlap")) +
+            (31..59).map { track("track-$it") }
+        val me = ScriptedMeRepository(
+            favoritesPages = mapOf(1 to Result.success(page1), 2 to Result.success(page2)),
+        )
+        val vm = LibraryViewModel(
+            StubAuthRepository(MutableStateFlow(AuthSession("alice", "tok"))),
+            me,
+            NoOpPlaybackRepository,
+            favoriteSyncManager(me),
+        )
+        advanceUntilIdle()
+
+        vm.loadMore()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.tracks).hasSize(59)
+        assertThat(vm.state.value.tracks.map(Track::id).toSet()).hasSize(59)
+        assertThat(vm.state.value.tracks.first { it.id == "track-30" }.title)
+            .isEqualTo("fresh overlap")
     }
 
     @Test
@@ -175,11 +258,15 @@ class LibraryViewModelTest {
     private fun favoriteSyncManager(meRepository: MeRepository) = FavoriteSyncManager(meRepository, NoOpPlaybackRepository)
 }
 
-private class StubAuthRepository(private val sessionFlow: MutableStateFlow<AuthSession?>) : AuthRepository {
+private class StubAuthRepository(
+    private val sessionFlow: MutableStateFlow<AuthSession?>,
+    private val logoutFailure: Throwable? = null,
+) : AuthRepository {
     override val session: Flow<AuthSession?> = sessionFlow
     override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
     override suspend fun logout() {
         sessionFlow.value = null
+        logoutFailure?.let { throw it }
     }
 }
 
@@ -189,14 +276,19 @@ private class ScriptedMeRepository(
     private val history: List<Track> = emptyList(),
     private val favoritesError: Throwable? = null,
     private val favoritesPages: Map<Int, Result<List<Track>>>? = null,
+    favoritesSequence: List<Result<List<Track>>> = emptyList(),
 ) : MeRepository {
+    private val remainingFavorites = ArrayDeque(favoritesSequence)
     var favoritesCalls = 0
+        private set
+    var historyCalls = 0
         private set
     val favoritesPageCalls = mutableListOf<Int>()
 
     override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> {
         favoritesCalls += 1
         favoritesPageCalls += page
+        if (remainingFavorites.isNotEmpty()) return remainingFavorites.removeFirst().getOrThrow()
         favoritesPages?.get(page)?.let { return it.getOrThrow() }
         favoritesError?.let { throw it }
         return favorites
@@ -205,7 +297,10 @@ private class ScriptedMeRepository(
     override suspend fun playlistNames(): List<Playlist> = emptyList()
     override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
     override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = feed
-    override suspend fun history(page: Int, count: Int): List<Track> = history
+    override suspend fun history(page: Int, count: Int): List<Track> {
+        historyCalls += 1
+        return history
+    }
 }
 
 private object NoOpPlaybackRepository : PlaybackRepository {

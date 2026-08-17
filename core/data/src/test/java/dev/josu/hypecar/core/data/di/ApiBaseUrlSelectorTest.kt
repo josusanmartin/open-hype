@@ -24,5 +24,11 @@ class ApiBaseUrlSelectorTest {
         )
 
         assertThat(selected).isEqualTo("http://10.0.2.2:8787/v2/")
+        assertThat(ApiBaseUrlSelector.isDevProxy(selected)).isTrue()
+    }
+
+    @Test
+    fun productionApiIsNotClassifiedAsDevProxy() {
+        assertThat(ApiBaseUrlSelector.isDevProxy("https://api.hypem.com/v2/")).isFalse()
     }
 }

@@ -68,7 +68,7 @@ private val LightColorScheme = lightColorScheme(
     onSurface = HypeColors.CreamOnSurface,
     surfaceVariant = HypeColors.CreamSurfaceVariant,
     onSurfaceVariant = HypeColors.CreamMuted,
-    error = HypeColors.Error,
+    error = HypeColors.ErrorLight,
     onError = HypeColors.White,
 )
 
@@ -85,8 +85,8 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = HypeColors.DarkOnSurface,
     surfaceVariant = HypeColors.DarkSurfaceCard,
     onSurfaceVariant = HypeColors.DarkOnSurfaceMuted,
-    error = HypeColors.Error,
-    onError = HypeColors.White,
+    error = HypeColors.ErrorDark,
+    onError = ColorOnPrimaryDark,
 )
 
 internal val HypeTypography = Typography(

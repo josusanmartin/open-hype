@@ -32,6 +32,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.repository.AccountDataWriteGate
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.SearchQuery
 import dev.josu.hypecar.core.model.SearchSort
@@ -40,6 +42,7 @@ import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import dev.josu.hypecar.core.model.withoutPersonalFavoriteState
 import dev.josu.hypecar.core.ui.hypeTokens
 import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.catalog.EditorialHeroHeader
@@ -66,19 +69,66 @@ data class SearchUiState(
 class SearchViewModel @Inject constructor(
     private val searchRepository: SearchRepository,
     private val playbackRepository: PlaybackRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
+    private val accountDataWriteGate: AccountDataWriteGate = AccountDataWriteGate(),
 ) : ViewModel() {
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
     private var searchJob: Job? = null
+    private var observedAccountGeneration = accountDataWriteGate.accountBoundary.value.generation
+
+    init {
+        viewModelScope.launch {
+            favoriteSyncManager.edits.collect { edit ->
+                _state.update { current ->
+                    current.copy(tracks = favoriteSyncManager.applyTo(current.tracks, edit))
+                }
+            }
+        }
+        viewModelScope.launch {
+            accountDataWriteGate.accountBoundary.collect { boundary ->
+                if (boundary.generation == observedAccountGeneration) return@collect
+                observedAccountGeneration = boundary.generation
+                searchJob?.cancel()
+                val shouldReload = _state.value.query.isNotBlank()
+                _state.update { current ->
+                    current.copy(
+                        tracks = current.tracks.withoutPersonalFavoriteState(),
+                        loading = false,
+                        error = null,
+                    )
+                }
+                if (shouldReload) search()
+            }
+        }
+    }
 
     fun updateQuery(value: String) {
         if (value == _state.value.query) return
-        _state.update { it.copy(query = value, loading = value.isNotBlank()) }
+        _state.update { current ->
+            val normalizedQueryChanged = current.query.trim() != value.trim()
+            current.copy(
+                query = value,
+                // Results belong to the old query. Clear them synchronously so
+                // the hero and list never claim they answer newly typed text.
+                tracks = if (normalizedQueryChanged) emptyList() else current.tracks,
+                loading = value.isNotBlank(),
+                error = null,
+            )
+        }
         debouncedSearch()
     }
 
     fun updateSort(sort: SearchSort) {
-        _state.update { it.copy(sort = sort) }
+        if (sort == _state.value.sort) return
+        _state.update {
+            it.copy(
+                sort = sort,
+                tracks = emptyList(),
+                loading = it.query.isNotBlank(),
+                error = null,
+            )
+        }
         if (_state.value.query.isNotBlank()) {
             search()
         }
@@ -94,15 +144,21 @@ class SearchViewModel @Inject constructor(
             if (debounceMs > 0) delay(debounceMs)
             val query = _state.value.query.trim()
             val sort = _state.value.sort
+            val accountGeneration = accountDataWriteGate.accountBoundary.value.generation
             if (query.isBlank()) {
                 _state.update { it.copy(loading = false, tracks = emptyList(), error = null) }
                 return@launch
             }
             _state.update { it.copy(loading = true, error = null) }
+            val favoriteRead = favoriteSyncManager.captureFavoriteRead()
             val result = runSuspendCatchingPreservingCancellation {
-                searchRepository.searchTracks(SearchQuery(query, sort), count = 30)
+                favoriteSyncManager.applyToFetched(
+                    searchRepository.searchTracks(SearchQuery(query, sort), count = 30),
+                    favoriteRead,
+                )
             }
             _state.update { current ->
+                if (accountDataWriteGate.accountBoundary.value.generation != accountGeneration) return@update current
                 if (current.query.trim() != query || current.sort != sort) {
                     current.copy(loading = false)
                 } else {
@@ -179,6 +235,7 @@ fun SearchRoute(
         },
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
+        onRetry = viewModel::search,
     )
 }
 
@@ -219,7 +276,7 @@ private fun SearchControlPanel(
                     shape = RoundedCornerShape(if (compactMode) 10.dp else 18.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color(0xFFFF934A),
-                        unfocusedBorderColor = Color(0xFF58413A),
+                        unfocusedBorderColor = Color(0xFFA39B92),
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
                         focusedLabelColor = Color(0xFFFFC7A2),
@@ -231,8 +288,13 @@ private fun SearchControlPanel(
                 )
                 Button(
                     onClick = onSearch,
+                    enabled = query.isNotBlank(),
                     modifier = Modifier
-                        .pressFeedback(pressedScale = 0.94f, label = "searchButtonPress")
+                        .pressFeedback(
+                            enabled = query.isNotBlank(),
+                            pressedScale = 0.94f,
+                            label = "searchButtonPress",
+                        )
                         .padding(top = if (compactMode) 2.dp else 8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = hypeTokens.brand.primary,

@@ -1,6 +1,10 @@
 package dev.josu.hypecar.core.playback
 
 import android.content.Context
+import android.net.Uri
+import android.os.Bundle
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
@@ -26,12 +30,23 @@ class HypePlaybackManagerTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
 
-    private fun newManager() = HypePlaybackManager(
+    private fun newManager(historyRepository: HistoryRepository = NoOpHistory) = HypePlaybackManager(
         context = context,
-        historyRepository = NoOpHistory,
+        historyRepository = historyRepository,
         offlineRepository = NoOpOffline,
         foregroundServiceStarter = NoOpForegroundStarter,
     )
+
+    @Test
+    fun `construction defers ExoPlayer initialization until first main-thread access`() {
+        val manager = newManager()
+
+        assertThat(manager.isPlayerInitialized).isFalse()
+
+        manager.player
+
+        assertThat(manager.isPlayerInitialized).isTrue()
+    }
 
     @Test
     fun `play with empty list clears the queue and pauses playback`() = runBlocking {
@@ -62,6 +77,17 @@ class HypePlaybackManagerTest {
     }
 
     @Test
+    fun `selecting a track does not record history before playback is ready`() = runBlocking {
+        val history = RecordingHistory()
+        val manager = newManager(history)
+
+        manager.play(listOf(track("a", "Alpha")))
+        ShadowLooper.idleMainLooper()
+
+        assertThat(history.listens).isEmpty()
+    }
+
+    @Test
     fun `queued media items carry the loved state for the auto session`() = runBlocking {
         val manager = newManager()
         manager.play(listOf(track("a", "Alpha", isLoved = true)))
@@ -71,6 +97,43 @@ class HypePlaybackManagerTest {
 
         assertThat(extras).isNotNull()
         assertThat(extras!!.getBoolean(MediaItemExtras.IsLoved)).isTrue()
+    }
+
+    @Test
+    fun `Auto media metadata survives fallback queue reconstruction`() {
+        val item = MediaItem.Builder()
+            .setMediaId("track:39v49?src=section%3Alatest&p=2&n=20")
+            .setUri("https://hypem.com/serve/public/39v49")
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle("Music In The Neighbourhood")
+                    .setArtist("L.A. Sagne")
+                    .setDescription("After a run of singles.")
+                    .setArtworkUri(Uri.parse("https://art.example/39v49.jpg"))
+                    .setExtras(
+                        Bundle().apply {
+                            putBoolean(MediaItemExtras.IsLoved, true)
+                            putInt(MediaItemExtras.BlogId, 22_246)
+                            putString(MediaItemExtras.BlogName, "Destroy//Exist")
+                            putInt(MediaItemExtras.LovedCount, 27)
+                        },
+                    )
+                    .build(),
+            )
+            .build()
+
+        val fallback = item.toFallbackTrack()
+
+        assertThat(fallback).isNotNull()
+        assertThat(fallback!!.id).isEqualTo("39v49")
+        assertThat(fallback.title).isEqualTo("Music In The Neighbourhood")
+        assertThat(fallback.artist).isEqualTo("L.A. Sagne")
+        assertThat(fallback.postedBy).isEqualTo("Destroy//Exist")
+        assertThat(fallback.postedById).isEqualTo(22_246)
+        assertThat(fallback.lovedCount).isEqualTo(27)
+        assertThat(fallback.isLoved).isTrue()
+        assertThat(fallback.postDescription).isEqualTo("After a run of singles.")
+        assertThat(fallback.thumbnails?.large).isEqualTo("https://art.example/39v49.jpg")
     }
 
     @Test
@@ -85,6 +148,23 @@ class HypePlaybackManagerTest {
         val current = manager.queue.value.current?.track
         assertThat(current?.isLoved).isTrue()
         assertThat(current?.lovedCount).isEqualTo(6)
+    }
+
+    @Test
+    fun `updateFavorite persists the new state in media metadata for callback recreation`() = runBlocking {
+        val manager = newManager()
+        manager.play(listOf(track("a", "Alpha", isLoved = false, lovedCount = 5)))
+        ShadowLooper.idleMainLooper()
+
+        manager.updateFavorite(trackId = "a", isLoved = true)
+        ShadowLooper.idleMainLooper()
+
+        val item = manager.player.currentMediaItem
+        assertThat(item).isNotNull()
+        assertThat(item!!.mediaMetadata.extras!!.getBoolean(MediaItemExtras.IsLoved)).isTrue()
+        assertThat(item.mediaMetadata.extras!!.getInt(MediaItemExtras.LovedCount)).isEqualTo(6)
+        assertThat(item.toFallbackTrack()!!.isLoved).isTrue()
+        assertThat(item.toFallbackTrack()!!.lovedCount).isEqualTo(6)
     }
 
     @Test
@@ -161,6 +241,78 @@ class HypePlaybackManagerTest {
         assertThat(manager.queue.value.transientError).isNull()
     }
 
+    @Test
+    fun `playing for the qualification threshold records exactly one listen`() {
+        val tracker = PlaybackListenTracker(qualificationMs = 3_000L)
+        tracker.onMediaItemTransition("a")
+
+        val pending = tracker.onPlaybackActiveChanged(isActive = true, nowMs = 10_000L)
+
+        assertThat(pending).isEqualTo(PendingListen(sessionId = 1L, remainingMs = 3_000L))
+        assertThat(tracker.recordIfQualified(pending!!.sessionId, nowMs = 12_999L)).isNull()
+        assertThat(tracker.recordIfQualified(pending.sessionId, nowMs = 13_000L)).isEqualTo("a")
+        assertThat(tracker.recordIfQualified(pending.sessionId, nowMs = 20_000L)).isNull()
+    }
+
+    @Test
+    fun `quick skip invalidates the old item and starts a fresh threshold`() {
+        val tracker = PlaybackListenTracker(qualificationMs = 3_000L)
+        tracker.onMediaItemTransition("a")
+        val skippedSession = tracker.onPlaybackActiveChanged(isActive = true, nowMs = 0L)!!
+
+        tracker.onMediaItemTransition("b")
+        val nextSession = tracker.onPlaybackActiveChanged(isActive = true, nowMs = 1_000L)!!
+
+        assertThat(tracker.recordIfQualified(skippedSession.sessionId, nowMs = 3_000L)).isNull()
+        assertThat(tracker.recordIfQualified(nextSession.sessionId, nowMs = 3_999L)).isNull()
+        assertThat(tracker.recordIfQualified(nextSession.sessionId, nowMs = 4_000L)).isEqualTo("b")
+    }
+
+    @Test
+    fun `playback error invalidates an item before recovery skips it`() {
+        val tracker = PlaybackListenTracker(qualificationMs = 3_000L)
+        tracker.onMediaItemTransition("failed")
+        val failedSession = tracker.onPlaybackActiveChanged(isActive = true, nowMs = 0L)!!
+
+        tracker.onPlaybackError(nowMs = 2_900L)
+
+        assertThat(tracker.onPlaybackActiveChanged(isActive = true, nowMs = 3_000L)).isNull()
+        assertThat(tracker.recordIfQualified(failedSession.sessionId, nowMs = 10_000L)).isNull()
+    }
+
+    @Test
+    fun `pause and in-item seek preserve elapsed listening without duplicating history`() {
+        val tracker = PlaybackListenTracker(qualificationMs = 3_000L)
+        tracker.onMediaItemTransition("a")
+        tracker.onPlaybackActiveChanged(isActive = true, nowMs = 0L)
+        tracker.onPlaybackActiveChanged(isActive = false, nowMs = 1_000L)
+
+        val resumed = tracker.onPlaybackActiveChanged(isActive = true, nowMs = 10_000L)!!
+        val afterSeek = tracker.onPlaybackActiveChanged(isActive = true, nowMs = 10_500L)!!
+
+        assertThat(resumed.remainingMs).isEqualTo(2_000L)
+        assertThat(afterSeek.remainingMs).isEqualTo(1_500L)
+        assertThat(tracker.recordIfQualified(afterSeek.sessionId, nowMs = 12_000L)).isEqualTo("a")
+        assertThat(tracker.onPlaybackActiveChanged(isActive = true, nowMs = 50_000L)).isNull()
+        assertThat(tracker.recordIfQualified(afterSeek.sessionId, nowMs = 60_000L)).isNull()
+    }
+
+    @Test
+    fun `repeat and revisit create distinct listen occurrences`() {
+        val tracker = PlaybackListenTracker(qualificationMs = 3_000L)
+
+        fun completeOccurrence(trackId: String, startsAtMs: Long): String? {
+            tracker.onMediaItemTransition(trackId)
+            val pending = tracker.onPlaybackActiveChanged(isActive = true, nowMs = startsAtMs)!!
+            return tracker.recordIfQualified(pending.sessionId, nowMs = startsAtMs + 3_000L)
+        }
+
+        assertThat(completeOccurrence("a", startsAtMs = 0L)).isEqualTo("a")
+        assertThat(completeOccurrence("a", startsAtMs = 4_000L)).isEqualTo("a")
+        assertThat(completeOccurrence("b", startsAtMs = 8_000L)).isEqualTo("b")
+        assertThat(completeOccurrence("a", startsAtMs = 12_000L)).isEqualTo("a")
+    }
+
     private fun track(
         id: String,
         title: String = "Title",
@@ -184,6 +336,15 @@ class HypePlaybackManagerTest {
 
 private object NoOpHistory : HistoryRepository {
     override suspend fun postListen(trackId: String, positionSeconds: Int): Boolean = true
+}
+
+private class RecordingHistory : HistoryRepository {
+    val listens = mutableListOf<Pair<String, Int>>()
+
+    override suspend fun postListen(trackId: String, positionSeconds: Int): Boolean {
+        listens += trackId to positionSeconds
+        return true
+    }
 }
 
 private object NoOpOffline : OfflineRepository {

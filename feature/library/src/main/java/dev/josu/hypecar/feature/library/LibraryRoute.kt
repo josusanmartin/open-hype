@@ -11,9 +11,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,6 +36,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,6 +57,7 @@ import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.UiErrorKind
+import dev.josu.hypecar.core.model.mergePageByTrackId
 import dev.josu.hypecar.core.model.repository.AuthRepository
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
@@ -61,9 +71,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import androidx.compose.ui.semantics.error as errorSemantics
 
 enum class LibraryTab { FAVORITES, FEED, PLAYLISTS, HISTORY }
 
@@ -80,6 +92,7 @@ data class LibraryUiState(
     val hasMore: Boolean = true,
     val loadingMore: Boolean = false,
     val loadMoreFailed: Boolean = false,
+    val logoutFailed: Boolean = false,
 )
 
 @HiltViewModel
@@ -92,12 +105,34 @@ class LibraryViewModel @Inject constructor(
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
     private var refreshJob: Job? = null
+    private var loadMoreJob: Job? = null
 
     init {
         viewModelScope.launch {
-            authRepository.session.collect { session ->
-                _state.update { it.copy(session = session) }
-                refresh()
+            authRepository.session.distinctUntilChanged().collect { session ->
+                // Session identity is the ownership boundary for every field
+                // on this screen. Clear the previous account synchronously,
+                // before a new request can suspend or fail, so account A can
+                // never remain visible while account B is loading.
+                refreshJob?.cancel()
+                loadMoreJob?.cancel()
+                _state.update { current ->
+                    current.copy(
+                        session = session,
+                        selectedPlaylistId = null,
+                        playlists = emptyList(),
+                        tracks = emptyList(),
+                        loading = session != null,
+                        refreshing = false,
+                        error = null,
+                        nextPage = 2,
+                        hasMore = session != null,
+                        loadingMore = false,
+                        loadMoreFailed = false,
+                        logoutFailed = if (session == null) current.logoutFailed else false,
+                    )
+                }
+                if (session != null) refresh()
             }
         }
         // Apply favorite edits emitted by any other screen so the Library
@@ -113,12 +148,40 @@ class LibraryViewModel @Inject constructor(
 
     fun selectTab(index: Int) {
         val tab = LibraryTab.entries.getOrNull(index) ?: return
-        _state.update { it.copy(selectedTab = tab, error = null) }
+        _state.update { current ->
+            if (current.selectedTab == tab) {
+                current.copy(error = null)
+            } else {
+                current.copy(
+                    selectedTab = tab,
+                    tracks = emptyList(),
+                    loading = current.session != null,
+                    refreshing = false,
+                    error = null,
+                    nextPage = 2,
+                    hasMore = current.session != null,
+                    loadingMore = false,
+                    loadMoreFailed = false,
+                )
+            }
+        }
         refresh()
     }
 
     fun selectPlaylist(playlistId: Int) {
-        _state.update { it.copy(selectedPlaylistId = playlistId) }
+        _state.update {
+            it.copy(
+                selectedPlaylistId = playlistId,
+                tracks = emptyList(),
+                loading = it.session != null,
+                refreshing = false,
+                error = null,
+                nextPage = 2,
+                hasMore = it.session != null,
+                loadingMore = false,
+                loadMoreFailed = false,
+            )
+        }
         refresh()
     }
 
@@ -130,7 +193,16 @@ class LibraryViewModel @Inject constructor(
 
     fun logout() {
         viewModelScope.launch {
-            authRepository.logout()
+            _state.update { it.copy(logoutFailed = false) }
+            runSuspendCatchingPreservingCancellation {
+                authRepository.logout()
+            }.onFailure {
+                // Session persistence closes the account gate before cleanup,
+                // so a failed durable wipe can leave the UI signed out. Make
+                // that exceptional state visible instead of silently implying
+                // that local account data was cleared successfully.
+                _state.update { current -> current.copy(logoutFailed = true) }
+            }
         }
     }
 
@@ -142,16 +214,22 @@ class LibraryViewModel @Inject constructor(
         favoriteSyncManager.toggle(track)
     }
 
-    private var loadMoreJob: Job? = null
-
     fun loadMore() {
         if (loadMoreJob?.isActive == true) return
         val current = _state.value
+        val expectedSession = current.session ?: return
         if (!current.hasMore || current.loadingMore || current.loading) return
         loadMoreJob = viewModelScope.launch {
-            _state.update { it.copy(loadingMore = true) }
+            _state.update { latest ->
+                if (latest.session == expectedSession) {
+                    latest.copy(loadingMore = true)
+                } else {
+                    latest
+                }
+            }
+            val favoriteRead = favoriteSyncManager.captureFavoriteRead()
             val result = runSuspendCatchingPreservingCancellation {
-                when (current.selectedTab) {
+                val tracks = when (current.selectedTab) {
                     LibraryTab.FAVORITES -> meRepository.favorites(page = current.nextPage, count = 30)
                     LibraryTab.FEED -> meRepository.feed(page = current.nextPage, count = 30).map(FeedItem::track)
                     LibraryTab.PLAYLISTS -> current.selectedPlaylistId?.let {
@@ -159,13 +237,20 @@ class LibraryViewModel @Inject constructor(
                     } ?: emptyList()
                     LibraryTab.HISTORY -> meRepository.history(page = current.nextPage, count = 30)
                 }
+                favoriteSyncManager.applyToFetched(tracks, favoriteRead)
             }
             _state.update { latest ->
-                if (latest.selectedTab != current.selectedTab) return@update latest
+                if (
+                    latest.session != expectedSession ||
+                    latest.selectedTab != current.selectedTab ||
+                    latest.selectedPlaylistId != current.selectedPlaylistId
+                ) {
+                    return@update latest
+                }
                 result.fold(
                     onSuccess = { fresh ->
                         latest.copy(
-                            tracks = latest.tracks + fresh,
+                            tracks = latest.tracks.mergePageByTrackId(fresh),
                             nextPage = latest.nextPage + 1,
                             hasMore = fresh.size >= 30,
                             loadingMore = false,
@@ -195,46 +280,63 @@ class LibraryViewModel @Inject constructor(
                     error = null,
                 )
             }
-            val result = runSuspendCatchingPreservingCancellation {
-                when (request.selectedTab) {
-                    LibraryTab.FAVORITES -> {
-                        if (request.session == null) {
-                            request.copy(loading = false, tracks = emptyList())
-                        } else {
-                            request.copy(loading = false, tracks = meRepository.favorites(count = 30, forceRefresh = viaPull))
-                        }
-                    }
+            val result = if (request.session == null) {
+                Result.success(
+                    request.copy(
+                        selectedPlaylistId = null,
+                        playlists = emptyList(),
+                        tracks = emptyList(),
+                        loading = false,
+                        refreshing = false,
+                        hasMore = false,
+                    ),
+                )
+            } else {
+                runSuspendCatchingPreservingCancellation {
+                    val favoriteRead = favoriteSyncManager.captureFavoriteRead()
+                    when (request.selectedTab) {
+                        LibraryTab.FAVORITES -> request.copy(
+                            loading = false,
+                            tracks = favoriteSyncManager.applyToFetched(
+                                meRepository.favorites(count = 30, forceRefresh = viaPull),
+                                favoriteRead,
+                            ),
+                        )
 
-                    LibraryTab.FEED -> {
-                        if (request.session == null) {
-                            request.copy(loading = false, tracks = emptyList())
-                        } else {
-                            request.copy(
-                                loading = false,
-                                tracks = meRepository.feed(count = 30, forceRefresh = viaPull).map(FeedItem::track),
-                            )
-                        }
-                    }
+                        LibraryTab.FEED -> request.copy(
+                            loading = false,
+                            tracks = favoriteSyncManager.applyToFetched(
+                                meRepository.feed(count = 30, forceRefresh = viaPull).map(FeedItem::track),
+                                favoriteRead,
+                            ),
+                        )
 
-                    LibraryTab.PLAYLISTS -> {
-                        if (request.session == null) {
-                            request.copy(loading = false, tracks = emptyList(), playlists = emptyList())
-                        } else {
+                        LibraryTab.PLAYLISTS -> {
                             val playlists = meRepository.playlistNames()
                             val selected = request.selectedPlaylistId ?: playlists.firstOrNull()?.id
                             request.copy(
                                 loading = false,
                                 playlists = playlists,
                                 selectedPlaylistId = selected,
-                                tracks = if (selected != null) meRepository.playlist(selected, count = 30, forceRefresh = viaPull) else emptyList(),
+                                tracks = if (selected != null) {
+                                    favoriteSyncManager.applyToFetched(
+                                        meRepository.playlist(selected, count = 30, forceRefresh = viaPull),
+                                        favoriteRead,
+                                    )
+                                } else {
+                                    emptyList()
+                                },
                             )
                         }
-                    }
 
-                    LibraryTab.HISTORY -> request.copy(
-                        loading = false,
-                        tracks = meRepository.history(count = 30),
-                    )
+                        LibraryTab.HISTORY -> request.copy(
+                            loading = false,
+                            tracks = favoriteSyncManager.applyToFetched(
+                                meRepository.history(count = 30),
+                                favoriteRead,
+                            ),
+                        )
+                    }
                 }
             }
             _state.update { current ->
@@ -255,7 +357,7 @@ class LibraryViewModel @Inject constructor(
                             )
                         },
                         onFailure = {
-                            request.copy(
+                            current.copy(
                                 loading = false,
                                 refreshing = false,
                                 error = it.toUiErrorKind(),
@@ -319,9 +421,7 @@ fun LibraryRoute(
             LibraryTab.HISTORY -> R.string.library_subtitle_history
         },
     )
-    val needsSession = state.selectedTab != LibraryTab.HISTORY
-
-    if (needsSession && state.session == null) {
+    if (state.session == null) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 40.dp),
@@ -349,6 +449,7 @@ fun LibraryRoute(
                     sectionName = tabTitles[state.selectedTab.ordinal].lowercase(),
                     onLoginClick = onLoginClick,
                     compactMode = isAutomotive,
+                    logoutFailed = state.logoutFailed,
                 )
             }
         }
@@ -398,6 +499,7 @@ fun LibraryRoute(
         },
         onTrackClick = viewModel::play,
         onBlogClick = { onBlogClick(it.postedById) },
+        onRetry = viewModel::refresh,
         onToggleFavorite = viewModel::toggleFavorite,
         onLoadMore = viewModel::loadMore,
         hasMore = state.hasMore,
@@ -420,9 +522,9 @@ private fun LibraryProfileStrip(
     val profileShape = if (compactMode) RoundedCornerShape(14.dp) else RoundedCornerShape(22.dp)
     val avatarSize = if (compactMode) 32.dp else 40.dp
     val rowSpacing = if (compactMode) 8.dp else 12.dp
-    val buttonSize = if (compactMode) 30.dp else 36.dp
     val primaryTextColor = hypeTokens.cards.onSurface
     val secondaryTextColor = hypeTokens.cards.onSurfaceMuted
+    val logoutLabel = stringResource(R.string.library_logout_button)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -492,20 +594,25 @@ private fun LibraryProfileStrip(
             }
             Surface(
                 onClick = onLogoutClick,
-                modifier = Modifier.pressFeedback(
-                    pressedScale = 0.90f,
-                    label = "libraryLogoutPress",
-                ),
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = logoutLabel
+                    }
+                    .pressFeedback(
+                        pressedScale = 0.90f,
+                        label = "libraryLogoutPress",
+                    ),
                 shape = CircleShape,
                 color = Color(0xFF241B18),
             ) {
                 Box(
                     modifier = Modifier
-                        .size(buttonSize)
+                        .fillMaxSize()
                         .background(Color.Transparent),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = stringResource(R.string.library_logout_button), tint = Color(0xFFE8D9CD))
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, tint = Color(0xFFE8D9CD))
                 }
             }
         }
@@ -522,18 +629,25 @@ private fun PlaylistStrip(
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = if (compactMode) 6.dp else 16.dp),
+            .padding(horizontal = if (compactMode) 6.dp else 16.dp)
+            .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(if (compactMode) 6.dp else 10.dp),
         contentPadding = PaddingValues(bottom = if (compactMode) 4.dp else 10.dp),
     ) {
         items(playlists, key = { it.id }) { playlist ->
             val selected = playlist.id == selectedPlaylistId
             Surface(
-                onClick = { onPlaylistSelected(playlist.id) },
-                modifier = Modifier.pressFeedback(
-                    pressedScale = 0.95f,
-                    label = "playlistChipPress",
-                ),
+                modifier = Modifier
+                    .sizeIn(minHeight = 48.dp)
+                    .pressFeedback(
+                        pressedScale = 0.95f,
+                        label = "playlistChipPress",
+                    )
+                    .selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { onPlaylistSelected(playlist.id) },
+                    ),
                 shape = RoundedCornerShape(if (compactMode) 9.dp else 16.dp),
                 color = if (selected) Color(0xFF201816) else Color(0xFFF9F4EE),
                 border = BorderStroke(
@@ -561,6 +675,7 @@ private fun SignedOutCard(
     sectionName: String,
     onLoginClick: () -> Unit,
     compactMode: Boolean,
+    logoutFailed: Boolean,
 ) {
     Surface(
         modifier = Modifier
@@ -584,6 +699,7 @@ private fun SignedOutCard(
                 } else {
                     MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
                 },
+                modifier = Modifier.semantics { heading() },
             )
             Text(
                 text = stringResource(R.string.library_signed_out_card_body, sectionName),
@@ -592,6 +708,20 @@ private fun SignedOutCard(
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = if (compactMode) 4.dp else 10.dp),
             )
+            if (logoutFailed) {
+                val errorMessage = stringResource(R.string.library_logout_failed)
+                Text(
+                    text = errorMessage,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .padding(top = if (compactMode) 6.dp else 12.dp)
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            errorSemantics(errorMessage)
+                        },
+                )
+            }
             Button(
                 onClick = onLoginClick,
                 modifier = Modifier

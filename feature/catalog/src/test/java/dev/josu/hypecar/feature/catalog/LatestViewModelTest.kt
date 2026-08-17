@@ -63,6 +63,25 @@ class LatestViewModelTest {
     }
 
     @Test
+    fun `failed mode switch never leaves rows from the previous mode visible`() = runTest {
+        val catalog = ScriptedCatalogRepository(
+            latestByMode = mapOf(
+                LatestMode.ALL to Result.success(listOf(track("old-mode"))),
+                LatestMode.ONLY_REMIXES to Result.failure(IOException("offline")),
+            ),
+        )
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
+        advanceUntilIdle()
+        assertThat(vm.state.value.tracks.map(Track::id)).containsExactly("old-mode")
+
+        vm.selectMode(LatestMode.ONLY_REMIXES.ordinal)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Network)
+    }
+
+    @Test
     fun `selectMode is a no-op when index is unchanged`() = runTest {
         val catalog = ScriptedCatalogRepository(latest = listOf(track("a")))
         val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
@@ -106,6 +125,26 @@ class LatestViewModelTest {
         assertThat(vm.state.value.nextPage).isEqualTo(3)
         assertThat(vm.state.value.hasMore).isTrue()
         assertThat(vm.state.value.loadingMore).isFalse()
+    }
+
+    @Test
+    fun `loadMore replaces overlapping track instead of creating a duplicate lazy key`() = runTest {
+        val page1 = (1..30).map { track("track-$it") }
+        val page2 = listOf(track("track-30").copy(title = "fresh overlap")) +
+            (31..59).map { track("track-$it") }
+        val catalog = ScriptedCatalogRepository(
+            latestPages = mapOf(1 to Result.success(page1), 2 to Result.success(page2)),
+        )
+        val vm = LatestViewModel(catalog, NoOpPlaybackRepository, latestFavoriteSync())
+        advanceUntilIdle()
+
+        vm.loadMore()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.tracks).hasSize(59)
+        assertThat(vm.state.value.tracks.map(Track::id).toSet()).hasSize(59)
+        assertThat(vm.state.value.tracks.first { it.id == "track-30" }.title)
+            .isEqualTo("fresh overlap")
     }
 
     @Test
@@ -210,6 +249,7 @@ private class ScriptedCatalogRepository(
     private val latest: List<Track> = emptyList(),
     private val latestError: Throwable? = null,
     private val latestPages: Map<Int, Result<List<Track>>>? = null,
+    private val latestByMode: Map<LatestMode, Result<List<Track>>> = emptyMap(),
 ) : CatalogRepository {
     val latestCalls = mutableListOf<LatestMode>()
     val latestPageCalls = mutableListOf<Int>()
@@ -217,6 +257,7 @@ private class ScriptedCatalogRepository(
     override suspend fun latest(mode: LatestMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> {
         latestCalls += mode
         latestPageCalls += page
+        latestByMode[mode]?.let { return it.getOrThrow() }
         latestPages?.get(page)?.let { return it.getOrThrow() }
         latestError?.let { throw it }
         return latest

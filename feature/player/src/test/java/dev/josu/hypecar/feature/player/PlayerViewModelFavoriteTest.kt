@@ -1,6 +1,8 @@
 package dev.josu.hypecar.feature.player
 
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.AccountDataWriteGate
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.FeedMode
 import dev.josu.hypecar.core.model.PlaybackItem
@@ -11,6 +13,7 @@ import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -136,7 +139,7 @@ class PlayerViewModelFavoriteTest {
     }
 
     @Test
-    fun `toggleFavorite retries when server returns stale opposite state`() = runTest {
+    fun `toggleFavorite does not blindly repeat a non-idempotent toggle without confirmation`() = runTest {
         val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
         val meRepository = SequenceFakeMeRepository(serverLovedResponses = listOf(false, true))
         val viewModel = newPlayerViewModel(playbackRepository, meRepository)
@@ -144,9 +147,39 @@ class PlayerViewModelFavoriteTest {
         viewModel.toggleFavorite()
         advanceUntilIdle()
 
-        assertThat(meRepository.toggledTrackIds).containsExactly("39v49", "39v49").inOrder()
-        assertThat(playbackRepository.favoriteUpdates).containsExactly("39v49" to true)
+        assertThat(meRepository.toggledTrackIds).containsExactly("39v49")
+        assertThat(playbackRepository.favoriteUpdates).containsExactly(
+            "39v49" to true,
+            "39v49" to false,
+        ).inOrder()
+        assertThat(playbackRepository.queue.value.current?.track?.isLoved).isFalse()
+    }
+
+    @Test
+    fun `late favorite failure from old account cannot alter new account queue`() = runTest {
+        val playbackRepository = FakePlaybackRepository(sampleTrack(isLoved = false))
+        val meRepository = BlockingFakeMeRepository()
+        val gate = AccountDataWriteGate()
+        val favoriteSyncManager = FavoriteSyncManager(
+            meRepository,
+            playbackRepository,
+            CoroutineScope(Dispatchers.Main.immediate),
+            gate,
+        )
+        val viewModel = PlayerViewModel(playbackRepository, favoriteSyncManager)
+
+        viewModel.toggleFavorite()
+        advanceUntilIdle()
         assertThat(playbackRepository.queue.value.current?.track?.isLoved).isTrue()
+
+        gate.deactivate()
+        gate.activate()
+        playbackRepository.replaceTrackForAccount(sampleTrack(isLoved = false))
+        meRepository.completeNextToggle(serverLoved = null)
+        advanceUntilIdle()
+
+        assertThat(playbackRepository.favoriteUpdates).containsExactly("39v49" to true)
+        assertThat(playbackRepository.queue.value.current?.track?.isLoved).isFalse()
     }
 
     @Test
@@ -219,6 +252,15 @@ private class FakePlaybackRepository(
         private set
     var repeatToggleCount = 0
         private set
+
+    fun replaceTrackForAccount(track: Track) {
+        _queue.value = PlaybackQueue(
+            items = listOf(PlaybackItem(track)),
+            currentIndex = 0,
+            isPlaying = true,
+            durationMs = _queue.value.durationMs,
+        )
+    }
 
     override suspend fun play(tracks: List<Track>, startIndex: Int) = Unit
     override suspend fun playFromTrack(track: Track) = Unit
@@ -325,6 +367,9 @@ private fun sampleTrack(isLoved: Boolean) = Track(
 
 private fun newPlayerViewModel(playback: PlaybackRepository, me: MeRepository) = PlayerViewModel(
     playbackRepository = playback,
-    meRepository = me,
-    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(me, playback),
+    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(
+        me,
+        playback,
+        CoroutineScope(Dispatchers.Main.immediate),
+    ),
 )

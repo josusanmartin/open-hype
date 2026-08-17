@@ -73,6 +73,20 @@ class LoginViewModelTest {
     }
 
     @Test
+    fun `rapid duplicate submissions start only one login`() = runTest {
+        val repo = FakeAuthRepository(
+            response = Result.success(AuthSession(username = "j", token = "t")),
+        )
+        val vm = LoginViewModel(repo)
+
+        vm.login("j", "p") { }
+        vm.login("j", "p") { }
+        advanceUntilIdle()
+
+        assertThat(repo.loginCalls).isEqualTo(1)
+    }
+
+    @Test
     fun `dismissError clears error state`() = runTest {
         val repo = FakeAuthRepository(response = Result.failure(java.net.UnknownHostException("no dns")))
         val vm = LoginViewModel(repo)
@@ -89,7 +103,13 @@ class LoginViewModelTest {
 private class FakeAuthRepository(
     private val response: Result<AuthSession>,
 ) : AuthRepository {
+    var loginCalls: Int = 0
+        private set
+
     override val session: Flow<AuthSession?> = MutableStateFlow(null)
-    override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = response
+    override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> {
+        loginCalls += 1
+        return response
+    }
     override suspend fun logout() = Unit
 }

@@ -51,4 +51,16 @@
     <string name="settings_size_gb" translatable="false">%1$d GB</string>
     <string name="settings_version" translatable="false">v%1$s</string>
     <string name="settings_usage_summary">%1$s · %2$s</string>
+    <string name="settings_error_sync">Couldn\'t update offline downloads. Try again.</string>
+
+    <!-- Android Automotive OS parked setup surface. -->
+    <string name="car_setup_title">Open Hype</string>
+    <string name="car_setup_subtitle">Your music, in the car’s Media app</string>
+    <string name="car_setup_body">Browse, search, and control playback from the system Media app. This screen is reserved for account and offline setup.</string>
+    <string name="car_setup_loading">Checking your account…</string>
+    <string name="car_setup_sign_in">Sign in</string>
+    <string name="car_setup_signed_in">Signed in as %1$s</string>
+    <string name="car_setup_sign_out">Sign out</string>
+    <string name="car_setup_settings">Offline settings</string>
+    <string name="car_setup_parked">Only change setup while parked.</string>
 </resources>

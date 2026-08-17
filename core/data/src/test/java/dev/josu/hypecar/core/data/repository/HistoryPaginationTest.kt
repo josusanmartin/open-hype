@@ -2,6 +2,7 @@ package dev.josu.hypecar.core.data.repository
 
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.data.local.entity.HistoryEntity
+import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.network.dto.toModel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -77,5 +78,54 @@ class HistoryPaginationTest {
 
         val tracks = repo.history(page = 0, count = 0)
         assertThat(tracks).isNotEmpty()
+    }
+
+    @Test
+    fun `history does not read retained rows while account gate is inactive`() = runBlocking {
+        val historyDao = FakeHistoryDao().apply {
+            upsert(HistoryEntity("account-a", 0, 1))
+        }
+        val trackDao = FakeTrackDao().apply {
+            upsertAll(listOf(sampleTrackDto("account-a", isLoved = true).toModel().toEntity()))
+        }
+        val gate = AccountDataWriteGate(initiallyActive = false)
+        val repo = DefaultMeRepository(
+            api = object : FakeHypeApiService() {},
+            trackDao = trackDao,
+            trackListDao = FakeTrackListDao(),
+            playlistDao = FakePlaylistDao(),
+            historyDao = historyDao,
+            json = Json,
+            accountDataWriteGate = gate,
+        )
+
+        assertThat(repo.history(page = 1, count = 10)).isEmpty()
+    }
+
+    @Test
+    fun `history uses track id as a stable tie breaker`() = runBlocking {
+        val historyDao = FakeHistoryDao().apply {
+            upsert(HistoryEntity("b", 0, 100))
+            upsert(HistoryEntity("a", 0, 100))
+        }
+        val trackDao = FakeTrackDao().apply {
+            upsertAll(
+                listOf(
+                    sampleTrackDto("a").toModel().toEntity(),
+                    sampleTrackDto("b").toModel().toEntity(),
+                ),
+            )
+        }
+        val repo = DefaultMeRepository(
+            api = object : FakeHypeApiService() {},
+            trackDao = trackDao,
+            trackListDao = FakeTrackListDao(),
+            playlistDao = FakePlaylistDao(),
+            historyDao = historyDao,
+            json = Json,
+        )
+
+        assertThat(repo.history(page = 1, count = 10).map(Track::id))
+            .containsExactly("a", "b").inOrder()
     }
 }

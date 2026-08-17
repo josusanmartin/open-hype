@@ -55,6 +55,27 @@ class ResilientDnsTest {
         dns.lookup("api.hypem.com")
     }
 
+    @Test
+    fun `does not send unrelated hostnames to fallback providers`() {
+        var fallbackCalls = 0
+        val dns = ResilientDns(
+            systemDns = FailingDns,
+            fallbackProviders = listOf(
+                object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> {
+                        fallbackCalls += 1
+                        return listOf(InetAddress.getByName("8.8.8.8"))
+                    }
+                },
+            ),
+        )
+
+        val failure = runCatching { dns.lookup("private.example") }.exceptionOrNull()
+
+        assertThat(failure).isInstanceOf(UnknownHostException::class.java)
+        assertThat(fallbackCalls).isEqualTo(0)
+    }
+
     private class StubDns(private val success: List<InetAddress>) : Dns {
         override fun lookup(hostname: String): List<InetAddress> = success
     }

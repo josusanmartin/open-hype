@@ -81,6 +81,37 @@ class OfflineSettingsViewModelTest {
         assertThat(vm.status.value.isEnabled).isTrue()
         assertThat(vm.status.value.downloadedTrackCount).isEqualTo(5)
     }
+
+    @Test
+    fun `repository failures are contained and exposed to the screen`() = runTest {
+        val repo = FailingOfflineRepository()
+        val vm = OfflineSettingsViewModel(repo)
+
+        vm.setEnabled(true)
+        advanceUntilIdle()
+        assertThat(vm.actionFailed.value).isTrue()
+
+        vm.setQuota(250L * 1024L * 1024L)
+        advanceUntilIdle()
+        assertThat(vm.actionFailed.value).isTrue()
+
+        vm.syncNow()
+        advanceUntilIdle()
+        assertThat(vm.actionFailed.value).isTrue()
+
+        vm.clearDownloads()
+        advanceUntilIdle()
+        assertThat(vm.actionFailed.value).isTrue()
+    }
+}
+
+private class FailingOfflineRepository : OfflineRepository {
+    override val status: StateFlow<OfflineDownloadStatus> = MutableStateFlow(OfflineDownloadStatus())
+    override suspend fun setEnabled(enabled: Boolean): Unit = error("work manager unavailable")
+    override suspend fun setQuotaBytes(quotaBytes: Long): Unit = error("preferences unavailable")
+    override suspend fun syncFavorites(): Unit = error("network unavailable")
+    override suspend fun clearDownloads(): Unit = error("storage unavailable")
+    override fun cachedAudioUri(trackId: String): String? = null
 }
 
 private class RecordingOfflineRepository(

@@ -1,7 +1,8 @@
 package dev.josu.hypecar.auto.service
 
 import android.os.Bundle
-import androidx.media.utils.MediaConstants
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.session.MediaConstants
 
 /**
  * Centralizes the Android Auto / Car App content-style hints that tell the
@@ -11,10 +12,10 @@ import androidx.media.utils.MediaConstants
  *
  * Reference: https://developer.android.com/training/cars/media#styling
  *
- * The constants come from `androidx.media:media` (legacy MediaBrowser surface),
- * but they are honored by Media3's MediaLibrarySession via the `extras` bundle
- * on a MediaItem's metadata.
+ * Media3 carries these hints through the metadata `extras` bundle to legacy
+ * and current Android Auto hosts.
  */
+@androidx.annotation.OptIn(UnstableApi::class)
 internal object AutoBrowseHints {
     /**
      * Extras for a browsable parent: tell the car to render its CHILDREN as
@@ -23,17 +24,17 @@ internal object AutoBrowseHints {
      */
     fun parentHints(childStyle: ChildStyle): Bundle = Bundle().apply {
         putInt(
-            MediaConstants.DESCRIPTION_EXTRAS_KEY_CONTENT_STYLE_BROWSABLE,
+            MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE,
             when (childStyle) {
-                ChildStyle.LIST_BROWSABLE -> MediaConstants.DESCRIPTION_EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
-                ChildStyle.CATEGORY_LIST -> MediaConstants.DESCRIPTION_EXTRAS_VALUE_CONTENT_STYLE_CATEGORY_LIST_ITEM
+                ChildStyle.LIST_BROWSABLE -> MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
+                ChildStyle.CATEGORY_LIST -> MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_CATEGORY_LIST_ITEM
             },
         )
         putInt(
-            MediaConstants.DESCRIPTION_EXTRAS_KEY_CONTENT_STYLE_PLAYABLE,
+            MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE,
             when (childStyle) {
-                ChildStyle.LIST_BROWSABLE -> MediaConstants.DESCRIPTION_EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
-                ChildStyle.CATEGORY_LIST -> MediaConstants.DESCRIPTION_EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
+                ChildStyle.LIST_BROWSABLE -> MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
+                ChildStyle.CATEGORY_LIST -> MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM
             },
         )
     }
@@ -41,8 +42,8 @@ internal object AutoBrowseHints {
     /** Extras for a single browsable section tile to render itself as a category chip. */
     fun selfHintCategory(): Bundle = Bundle().apply {
         putInt(
-            MediaConstants.DESCRIPTION_EXTRAS_KEY_CONTENT_STYLE_SINGLE_ITEM,
-            MediaConstants.DESCRIPTION_EXTRAS_VALUE_CONTENT_STYLE_CATEGORY_LIST_ITEM,
+            MediaConstants.EXTRAS_KEY_CONTENT_STYLE_SINGLE_ITEM,
+            MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_CATEGORY_LIST_ITEM,
         )
     }
 
@@ -52,8 +53,8 @@ internal object AutoBrowseHints {
      */
     fun placeholderHints(): Bundle = Bundle().apply {
         putInt(
-            MediaConstants.DESCRIPTION_EXTRAS_KEY_CONTENT_STYLE_SINGLE_ITEM,
-            MediaConstants.DESCRIPTION_EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM,
+            MediaConstants.EXTRAS_KEY_CONTENT_STYLE_SINGLE_ITEM,
+            MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM,
         )
     }
 

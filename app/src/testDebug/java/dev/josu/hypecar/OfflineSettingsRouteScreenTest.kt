@@ -1,11 +1,19 @@
 package dev.josu.hypecar
 
 import androidx.compose.material3.Surface
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.model.repository.OfflineDownloadStatus
 import dev.josu.hypecar.core.model.repository.OfflineRepository
@@ -38,18 +46,26 @@ class OfflineSettingsRouteScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("Settings").assertIsDisplayed()
+        composeRule.onNodeWithText("Settings")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit))
         composeRule.onNodeWithText("Manage your offline listening").assertIsDisplayed()
-        composeRule.onNodeWithText("Storage limit").assertIsDisplayed()
+        composeRule.onNodeWithText("Offline listening")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit))
+        composeRule.onNodeWithText("Storage limit")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit))
         composeRule.onNodeWithText("Sync now").assertIsDisplayed()
-        composeRule.onNodeWithText("Clear cached data").assertIsDisplayed()
+        composeRule.onNodeWithText("Clear cached data").assertIsDisplayed().assertIsNotEnabled()
         // The selected quota appears in the row header and the discrete chip set.
         assertThat(composeRule.onAllNodesWithText("500 MB").fetchSemanticsNodes()).isNotEmpty()
     }
 
     @Test
     fun `clear cached data opens confirmation dialog and Cancel dismisses it`() {
-        val repo = StubOfflineRepository(OfflineDownloadStatus(isEnabled = true))
+        val repo = StubOfflineRepository(
+            OfflineDownloadStatus(isEnabled = true, usedBytes = 1L, downloadedTrackCount = 1),
+        )
         val viewModel = OfflineSettingsViewModel(repo)
 
         composeRule.setContent {
@@ -70,7 +86,9 @@ class OfflineSettingsRouteScreenTest {
 
     @Test
     fun `clear confirmation forwards to repository`() {
-        val repo = StubOfflineRepository(OfflineDownloadStatus(isEnabled = true))
+        val repo = StubOfflineRepository(
+            OfflineDownloadStatus(isEnabled = true, usedBytes = 1L, downloadedTrackCount = 1),
+        )
         val viewModel = OfflineSettingsViewModel(repo)
 
         composeRule.setContent {
@@ -85,6 +103,66 @@ class OfflineSettingsRouteScreenTest {
 
         composeRule.waitUntil(timeoutMillis = 2_000) { repo.clearCount == 1 }
         assertThat(repo.clearCount).isEqualTo(1)
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h480dp")
+    fun `compact quota exposes selected semantics and a full touch target`() {
+        val viewModel = OfflineSettingsViewModel(
+            StubOfflineRepository(
+                OfflineDownloadStatus(
+                    isEnabled = true,
+                    quotaBytes = 500L * 1024L * 1024L,
+                ),
+            ),
+        )
+
+        composeRule.setContent {
+            HypeTheme(darkTheme = true, isAutomotive = true) {
+                OfflineSettingsRoute(viewModel = viewModel, compactMode = true)
+            }
+        }
+
+        composeRule.onNodeWithText("500 MB")
+            .assertIsSelected()
+            .assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    @Config(qualifiers = "w800dp-h480dp")
+    fun `repository detail is replaced by an announced friendly error`() {
+        val viewModel = OfflineSettingsViewModel(
+            StubOfflineRepository(
+                OfflineDownloadStatus(
+                    isEnabled = true,
+                    error = "java.net.SocketTimeoutException: internal endpoint",
+                ),
+            ),
+        )
+        val friendlyMessage = "Couldn't update offline downloads. Try again."
+
+        composeRule.setContent {
+            HypeTheme(darkTheme = true, isAutomotive = true) {
+                OfflineSettingsRoute(viewModel = viewModel, compactMode = true)
+            }
+        }
+
+        composeRule.onNodeWithText(friendlyMessage)
+            .assertIsDisplayed()
+            .assert(
+                SemanticsMatcher.expectValue(
+                    SemanticsProperties.Error,
+                    friendlyMessage,
+                ),
+            )
+            .assert(
+                SemanticsMatcher.expectValue(
+                    SemanticsProperties.LiveRegion,
+                    LiveRegionMode.Polite,
+                ),
+            )
+        composeRule.onNodeWithText("java.net.SocketTimeoutException: internal endpoint")
+            .assertDoesNotExist()
     }
 }
 

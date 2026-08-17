@@ -11,13 +11,17 @@ import kotlinx.coroutines.flow.StateFlow
 interface SessionGateway {
     val session: StateFlow<AuthSession?>
 
+    /** Waits until persisted state has produced its initial value. */
+    suspend fun awaitSessionInitialized(): AuthSession? = session.value
+
     suspend fun save(session: AuthSession)
 
     suspend fun clear()
 
     /**
-     * Schedules a non-suspend, fire-and-forget clear. Safe to call from any
-     * thread (including OkHttp interceptors). No-op when no session is loaded.
+     * Schedules a non-suspend, fire-and-forget clear only if [expectedToken]
+     * still belongs to the active session. Safe to call from any thread
+     * (including OkHttp interceptors).
      */
-    fun invalidate() = Unit
+    fun invalidate(expectedToken: String) = Unit
 }

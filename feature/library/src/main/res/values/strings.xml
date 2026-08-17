@@ -29,4 +29,5 @@
     <string name="library_logout_confirm_title">Log out?</string>
     <string name="library_logout_confirm_message">This signs you out and clears your cached library, history, and downloads on this device.</string>
     <string name="library_logout_cancel">Cancel</string>
+    <string name="library_logout_failed">You are signed out, but some local account data could not be cleared. Try again before another person uses this device.</string>
 </resources>

@@ -72,13 +72,6 @@ class HypeMediaLibraryService : MediaLibraryService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = librarySession
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        if (playbackManager.player.playWhenReady) {
-            return
-        }
-        super.onTaskRemoved(rootIntent)
-    }
-
     override fun onDestroy() {
         librarySession?.let { session ->
             removeSession(session)

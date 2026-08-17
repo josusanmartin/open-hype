@@ -2,11 +2,10 @@ package dev.josu.hypecar.auto.service
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.net.Uri
 import android.os.Bundle
-import android.util.LruCache
+import android.os.Process
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -27,8 +26,9 @@ import com.google.common.util.concurrent.ListenableFuture
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.josu.hypecar.auto.HypeMediaIds
 import dev.josu.hypecar.auto.R
-import dev.josu.hypecar.core.data.repository.FavoriteEdit
 import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.data.repository.FavoriteToggleOutcome
+import dev.josu.hypecar.core.model.AuthSession
 import dev.josu.hypecar.core.model.MediaItemExtras
 import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.SearchQuery
@@ -43,6 +43,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
@@ -99,7 +101,6 @@ class HypeMediaLibraryCallback @Inject constructor(
     private val offlineRepository: OfflineRepository,
     private val authRepository: AuthRepository,
     private val favoriteSyncManager: FavoriteSyncManager,
-    private val okHttpClient: okhttp3.OkHttpClient,
 ) : MediaLibrarySession.Callback {
     private companion object {
         const val DefaultPageSize = 20
@@ -116,18 +117,28 @@ class HypeMediaLibraryCallback @Inject constructor(
         const val ExtraBlogId = MediaItemExtras.BlogId
         const val ExtraBlogName = MediaItemExtras.BlogName
         const val ExtraLovedCount = MediaItemExtras.LovedCount
-
-        const val InlineArtworkMaxSizePx = 512
-        const val InlineArtworkJpegQuality = 86
-        const val InlineArtworkCacheBytes = 4 * 1024 * 1024
     }
+
+    private data class AccountObservation(
+        val session: AuthSession? = null,
+        val generation: Long = 0,
+        val initialized: Boolean = false,
+    )
+
+    private data class ActiveAccount(
+        val session: AuthSession,
+        val generation: Long,
+    )
+
+    private data class FavoriteOverride(
+        val loved: Boolean,
+        val account: ActiveAccount,
+    )
 
     private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val drawableArtworkCache = java.util.concurrent.ConcurrentHashMap<Int, ByteArray>()
-    private val inlineArtworkCache = object : LruCache<String, ByteArray>(InlineArtworkCacheBytes) {
-        override fun sizeOf(key: String, value: ByteArray): Int = value.size
-    }
-    private val favoriteStateOverrides = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val favoriteStateOverrides = java.util.concurrent.ConcurrentHashMap<String, FavoriteOverride>()
+    private val observedAccount = java.util.concurrent.atomic.AtomicReference(AccountObservation())
 
     /** Tracks the favorite state for the currently-playing track so the icon flips after a tap. */
     private val likedNowPlaying = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -145,28 +156,44 @@ class HypeMediaLibraryCallback @Inject constructor(
     private var currentSession: MediaLibrarySession? = null
 
     init {
-        // Fold favorite edits from every other surface (list screens, the
-        // player screen) into this session so the car heart and the per-track
-        // overrides never drift from what the user did on the phone.
+        // Scope favorite edits to the exact signed-in identity. collectLatest
+        // cancels an edit handler that was already suspended on the main thread
+        // when logout/account-switch arrives, so it cannot resume into the next
+        // account. Edits emitted after a switch are handled by the new collector.
         callbackScope.launch {
-            favoriteSyncManager.edits.collect { edit ->
-                rememberFavoriteState(edit.trackId, edit.isLoved)
+            authRepository.session.distinctUntilChanged().collectLatest { account ->
+                val previous = observedAccount.get()
+                val observation = AccountObservation(
+                    session = account,
+                    generation = previous.generation + 1,
+                    initialized = true,
+                )
+                observedAccount.set(observation)
+                favoriteStateOverrides.clear()
+                favoriteToggleGeneration.incrementAndGet()
                 withContext(Dispatchers.Main.immediate) {
                     val session = currentSession ?: return@withContext
-                    val playingId = session.player.currentMediaItem
-                        ?.let { HypeMediaIds.parseTrackId(it.mediaId) }
-                    if (playingId == edit.trackId && likedNowPlaying.get() != edit.isLoved) {
-                        likedNowPlaying.set(edit.isLoved)
-                        session.updateAllNowPlayingButtons(edit.isLoved)
+                    val loved = favoriteStateFor(session.player.currentMediaItem)
+                    likedNowPlaying.set(loved)
+                    session.refreshAvailableCommands()
+                    session.updateAllNowPlayingButtons(loved)
+                }
+
+                if (account != null) {
+                    val editAccount = ActiveAccount(account, observation.generation)
+                    favoriteSyncManager.edits.collect { edit ->
+                        rememberFavoriteState(edit.trackId, edit.isLoved, editAccount)
+                        withContext(Dispatchers.Main.immediate) {
+                            val session = currentSession ?: return@withContext
+                            val playingId = session.player.currentMediaItem
+                                ?.let { HypeMediaIds.parseTrackId(it.mediaId) }
+                            if (playingId == edit.trackId && likedNowPlaying.get() != edit.isLoved) {
+                                likedNowPlaying.set(edit.isLoved)
+                                session.updateAllNowPlayingButtons(edit.isLoved)
+                            }
+                        }
                     }
                 }
-            }
-        }
-        // A signed-out user has no favorites; stale overrides from the previous
-        // account must not shadow the fresh metadata of the next one.
-        callbackScope.launch {
-            authRepository.session.collect { session ->
-                if (session == null) favoriteStateOverrides.clear()
             }
         }
     }
@@ -222,32 +249,52 @@ class HypeMediaLibraryCallback @Inject constructor(
         nextButton(),
     )
 
+    private fun buildMediaButtonPreferencesForController(
+        loved: Boolean,
+        canToggleFavorite: Boolean,
+    ): List<CommandButton> = if (canToggleFavorite) {
+        buildMediaButtonPreferences(loved)
+    } else {
+        listOf(previousButton(), nextButton())
+    }
+
+    private fun buildCarMediaButtonPreferencesForController(
+        loved: Boolean,
+        canToggleFavorite: Boolean,
+    ): List<CommandButton> = if (canToggleFavorite) {
+        buildCarMediaButtonPreferences(loved)
+    } else {
+        listOf(previousButton(), nextButton())
+    }
+
     private fun MediaLibrarySession.updateNowPlayingButtons(
         controller: MediaSession.ControllerInfo?,
         loved: Boolean,
     ) {
+        val canToggleFavorite = controller?.canToggleFavorite(this) ?: (activeAccountSnapshot() != null)
         if (controller != null) {
             val customLayout = if (controller == mediaNotificationControllerInfo) {
-                buildNotificationCustomLayout(loved)
+                if (canToggleFavorite) buildNotificationCustomLayout(loved) else emptyList()
             } else {
                 buildNowPlayingLayout(loved)
             }
             val mediaButtons = if (controller == mediaNotificationControllerInfo) {
-                buildMediaButtonPreferences(loved)
+                buildMediaButtonPreferencesForController(loved, canToggleFavorite)
             } else {
-                buildCarMediaButtonPreferences(loved)
+                buildCarMediaButtonPreferencesForController(loved, canToggleFavorite)
             }
             setCustomLayout(controller, customLayout)
             setMediaButtonPreferences(controller, mediaButtons)
         } else {
             setCustomLayout(buildNowPlayingLayout(loved))
-            setMediaButtonPreferences(buildCarMediaButtonPreferences(loved))
+            setMediaButtonPreferences(
+                buildCarMediaButtonPreferencesForController(loved, canToggleFavorite),
+            )
         }
     }
 
     private fun MediaLibrarySession.updateAllNowPlayingButtons(loved: Boolean) {
-        setCustomLayout(buildNowPlayingLayout(loved))
-        setMediaButtonPreferences(buildCarMediaButtonPreferences(loved))
+        updateNowPlayingButtons(controller = null, loved = loved)
         connectedControllers.forEach { controller ->
             updateNowPlayingButtons(controller, loved)
         }
@@ -260,52 +307,149 @@ class HypeMediaLibraryCallback @Inject constructor(
         val fromMetadata = mediaItem.mediaMetadata.extras?.getBoolean(ExtraIsLoved, false) ?: false
         val trackId = HypeMediaIds.parseTrackId(mediaItem.mediaId) ?: return fromMetadata
         val override = favoriteStateOverrides[trackId] ?: return fromMetadata
-        if (override == fromMetadata) {
+        val activeAccount = activeAccountSnapshot()
+        if (override.account != activeAccount) {
+            favoriteStateOverrides.remove(trackId, override)
+            return fromMetadata
+        }
+        if (override.loved == fromMetadata) {
             // Fresh metadata agrees — the override served its purpose. Dropping
             // it lets future server-side changes (unfavorite on the website,
             // another device) win again instead of being shadowed forever.
-            favoriteStateOverrides.remove(trackId)
+            favoriteStateOverrides.remove(trackId, override)
         }
-        return override
+        return override.loved
     }
 
-    private fun MediaSession.applyFavoriteState(trackId: String, loved: Boolean) {
+    private fun MediaSession.applyFavoriteState(
+        trackId: String,
+        loved: Boolean,
+        account: ActiveAccount,
+    ) {
         likedNowPlaying.set(loved)
-        rememberFavoriteState(trackId, loved)
+        rememberFavoriteState(trackId, loved, account)
         if (this is MediaLibrarySession) {
             updateAllNowPlayingButtons(loved)
         }
     }
 
+    private fun rememberFavoriteState(
+        trackId: String,
+        loved: Boolean,
+        account: ActiveAccount,
+    ) {
+        favoriteStateOverrides[trackId] = FavoriteOverride(loved, account)
+    }
+
+    // Reflection-driven metadata tests use this overload. Production call sites
+    // pass their captured account explicitly so a late result can never acquire
+    // the identity of whichever account happens to be active at completion.
+    @Suppress("unused")
     private fun rememberFavoriteState(trackId: String, loved: Boolean) {
-        favoriteStateOverrides[trackId] = loved
+        activeAccountSnapshot()?.let { rememberFavoriteState(trackId, loved, it) }
     }
 
     /**
-     * Controllers allowed to invoke account-mutating custom commands (the
-     * favorite toggle). The service must stay exported for Auto/Assistant, so
-     * any co-installed app can connect and control playback — but only known
-     * system surfaces (and this app itself) may silently change the user's
-     * Hype Machine favorites.
+     * The service is exported so Android Auto, AAOS, Assistant, Bluetooth, and
+     * System UI can discover it. Media3 1.5.1 otherwise accepts every caller
+     * with every command, so admission must be explicit here.
+     *
+     * [MediaSession.ControllerInfo.isTrusted] is the platform signal for media
+     * control privileges (system UID, media-control permission, or an enabled
+     * notification listener). The same-process checks are kept explicit because
+     * older Media3/platform controller combinations do not reliably mark the
+     * app's own controller trusted, notably on API 26/27.
      */
-    private val trustedControllerPackages = setOf(
-        "com.google.android.projection.gearhead", // projected Android Auto
-        "com.google.android.googlequicksearchbox", // Assistant
-        "com.android.systemui",
-        "com.android.bluetooth",
-        "com.android.car.media", // AAOS Media Center
-        "com.android.car.carlauncher",
-    )
+    private fun MediaSession.ControllerInfo.canControl(session: MediaSession): Boolean =
+        uid == Process.myUid() ||
+            isTrusted ||
+            (session is MediaLibrarySession && this == session.mediaNotificationControllerInfo) ||
+            isVerifiedCarController(session)
 
-    private fun MediaSession.ControllerInfo.isTrustedForAccountActions(session: MediaSession): Boolean =
-        packageName == context.packageName ||
-            packageName in trustedControllerPackages ||
-            (session is MediaLibrarySession && this == session.mediaNotificationControllerInfo)
+    /**
+     * Account-backed browse data is more sensitive than the public catalog.
+     * Package-name recognition is enough to keep projected/embedded car hosts
+     * usable for public playback, but private Favorites/Feed/Playlists/History
+     * additionally require the platform's media-control trust signal.
+     */
+    private fun MediaSession.ControllerInfo.canReadAccount(session: MediaSession): Boolean =
+        uid == Process.myUid() ||
+            (session is MediaLibrarySession && this == session.mediaNotificationControllerInfo) ||
+            (isTrusted && isVerifiedCarController(session))
+
+    private fun MediaSession.ControllerInfo.isVerifiedCarController(session: MediaSession): Boolean {
+        if (uid < 0) return false
+        val isCarHost = session.isAutoCompanionController(this) || session.isAutomotiveController(this)
+        if (!isCarHost) return false
+        return context.packageManager.getPackagesForUid(uid)
+            ?.any { installedPackage -> installedPackage == packageName } == true
+    }
+
+    /**
+     * MediaButtonReceiver starts this app's own service with an internal
+     * fallback controller before a notification controller exists. Media3
+     * represents it with the app package and negative Binder IDs; an external
+     * Binder caller cannot obtain those kernel-supplied IDs, and the exported
+     * receiver itself requires the signature-level MEDIA_CONTENT_CONTROL
+     * permission. This exception is deliberately limited to playback
+     * resumption below.
+     */
+    private fun MediaSession.ControllerInfo.isMediaButtonFallback(): Boolean =
+        uid < 0 && packageName == context.packageName
+
+    /**
+     * Favorite toggles mutate the user's account and therefore need stronger
+     * identity than media-control trust alone. Media3 1.5.1 has no
+     * `isPackageNameVerified`, and its Auto/Automotive helpers only inspect the
+     * claimed package string. Verify that the Binder UID actually owns that
+     * package before exposing the command to an external car host.
+     */
+    private fun MediaSession.ControllerInfo.canMutateAccount(session: MediaSession): Boolean {
+        if (uid == Process.myUid()) return true
+        if (session is MediaLibrarySession && this == session.mediaNotificationControllerInfo) return true
+        return isTrusted && isVerifiedCarController(session)
+    }
+
+    private fun MediaSession.ControllerInfo.canToggleFavorite(session: MediaSession): Boolean =
+        activeAccountSnapshot() != null && canMutateAccount(session)
+
+    private fun availableSessionCommands(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+    ) = ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
+        .buildUpon()
+        .apply {
+            if (controller.canToggleFavorite(session)) {
+                add(SessionCommand(ActionToggleFavorite, Bundle.EMPTY))
+            }
+        }
+        .build()
+
+    /** Refreshes capabilities for controllers that remain connected across login/logout. */
+    private fun MediaLibrarySession.refreshAvailableCommands() {
+        connectedControllers.forEach { controller ->
+            setAvailableCommands(
+                controller,
+                availableSessionCommands(this, controller),
+                ConnectionResult.DEFAULT_PLAYER_COMMANDS,
+            )
+        }
+    }
+
+    private fun String.isAccountBackedMediaId(): Boolean =
+        this == HypeMediaIds.favorites ||
+            this == HypeMediaIds.feed ||
+            this == HypeMediaIds.playlists ||
+            this == HypeMediaIds.history ||
+            HypeMediaIds.parsePlaylistId(this) != null
 
     override fun onConnect(
         session: MediaSession,
         controller: MediaSession.ControllerInfo,
     ): ConnectionResult {
+        if (!controller.canControl(session)) {
+            return ConnectionResult.reject()
+        }
         if (currentSession == null && session is MediaLibrarySession) {
             currentSession = session
             session.player.addListener(playerListener)
@@ -315,21 +459,18 @@ class HypeMediaLibraryCallback @Inject constructor(
             // runs on the application thread, so the player read is safe.
             likedNowPlaying.set(favoriteStateFor(session.player.currentMediaItem))
         }
-        val sessionCommands = ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
-            .buildUpon()
-            .apply {
-                if (controller.isTrustedForAccountActions(session)) {
-                    add(SessionCommand(ActionToggleFavorite, Bundle.EMPTY))
-                }
-            }
-            .build()
+        val canToggleFavorite = controller.canToggleFavorite(session)
         return ConnectionResult.AcceptedResultBuilder(session)
-            .setAvailableSessionCommands(sessionCommands)
+            .setAvailableSessionCommands(availableSessionCommands(session, controller))
             .setAvailablePlayerCommands(ConnectionResult.DEFAULT_PLAYER_COMMANDS)
             .setCustomLayout(
                 ImmutableList.copyOf(
                     if (session is MediaLibrarySession && controller == session.mediaNotificationControllerInfo) {
-                        buildNotificationCustomLayout(likedNowPlaying.get())
+                        if (canToggleFavorite) {
+                            buildNotificationCustomLayout(likedNowPlaying.get())
+                        } else {
+                            emptyList()
+                        }
                     } else {
                         buildNowPlayingLayout(likedNowPlaying.get())
                     },
@@ -338,9 +479,15 @@ class HypeMediaLibraryCallback @Inject constructor(
             .setMediaButtonPreferences(
                 ImmutableList.copyOf(
                     if (session is MediaLibrarySession && controller == session.mediaNotificationControllerInfo) {
-                        buildMediaButtonPreferences(likedNowPlaying.get())
+                        buildMediaButtonPreferencesForController(
+                            likedNowPlaying.get(),
+                            canToggleFavorite,
+                        )
                     } else {
-                        buildCarMediaButtonPreferences(likedNowPlaying.get())
+                        buildCarMediaButtonPreferencesForController(
+                            likedNowPlaying.get(),
+                            canToggleFavorite,
+                        )
                     },
                 ),
             )
@@ -352,57 +499,105 @@ class HypeMediaLibraryCallback @Inject constructor(
         controller: MediaSession.ControllerInfo,
         customCommand: SessionCommand,
         args: Bundle,
-    ): ListenableFuture<SessionResult> = when (customCommand.customAction) {
-        ActionToggleFavorite -> handleToggleFavorite(session, controller)
-        else -> Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
-    }
-
-    private fun handleToggleFavorite(
-        session: MediaSession,
-        controller: MediaSession.ControllerInfo,
     ): ListenableFuture<SessionResult> {
-        // onCustomCommand runs on the application thread — capture everything
-        // the IO continuation needs from the player here, up front.
-        val current = session.player.currentMediaItem
-            ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
-        val currentMediaId = current.mediaId
-        val trackId = HypeMediaIds.parseTrackId(currentMediaId)
-            ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
-        val original = likedNowPlaying.get()
-        val optimistic = !original
-        val generation = favoriteToggleGeneration.incrementAndGet()
-        session.applyFavoriteState(trackId, optimistic)
-        return callbackScope.future {
-            // Broadcast so phone lists and the player screen flip immediately.
-            favoriteSyncManager.publish(
-                FavoriteEdit(trackId, optimistic, if (optimistic) 1 else -1),
-            )
-            val result = resolveAutoFavoriteToggle(
-                meRepository = meRepository,
-                trackId = trackId,
-                originalLoved = original,
-            )
-            val resolved = result.confirmedLoved
-            // Always reconcile the per-track truth — even if the player moved
-            // on mid-flight, a failed toggle must not leave the optimistic
-            // value pinned in the overrides.
-            rememberFavoriteState(trackId, resolved)
-            if (resolved != optimistic) {
-                favoriteSyncManager.publish(
-                    FavoriteEdit(trackId, resolved, if (optimistic) -1 else 1),
-                )
-                // Player and session must only be touched on the application
-                // thread; Media3 throws on cross-thread access.
-                withContext(Dispatchers.Main.immediate) {
-                    if (
-                        favoriteToggleGeneration.get() == generation &&
-                        session.player.currentMediaItem?.mediaId == currentMediaId
-                    ) {
-                        session.applyFavoriteState(trackId, resolved)
-                    }
+        if (!controller.canControl(session)) {
+            return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+        }
+        return when (customCommand.customAction) {
+            ActionToggleFavorite -> {
+                if (controller.canMutateAccount(session)) {
+                    handleToggleFavorite(session)
+                } else {
+                    Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
                 }
             }
-            result.sessionResult
+            else -> Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+        }
+    }
+
+    private fun handleToggleFavorite(session: MediaSession): ListenableFuture<SessionResult> {
+        // onCustomCommand runs on the application thread — capture everything
+        // the IO continuation needs from the player and account here, up front.
+        // If persisted auth has not reached this callback yet, fail closed
+        // instead of associating the command with whichever account appears
+        // later.
+        val account = activeAccountSnapshot()
+            ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+        // FavoriteSyncManager owns the account write gate. Capture its opaque
+        // operation token synchronously beside the callback's identity so a
+        // session switch between our last check and publish is rejected inside
+        // the publication itself.
+        val accountOperation = favoriteSyncManager.captureAccountOperation()
+        val current = session.player.currentMediaItem
+            ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
+        val trackId = HypeMediaIds.parseTrackId(current.mediaId)
+            ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
+        val original = likedNowPlaying.get()
+        return callbackScope.future {
+            // Re-read the callback's auth source before entering the shared
+            // mutation pipeline. Besides catching a normal logout, this closes
+            // the gap where session identity changes between the synchronous
+            // snapshot and the account-gate token captured above.
+            if (!account.isStillCurrent()) {
+                return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
+            }
+            val request = favoriteSyncManager.toggleWithResult(
+                trackId = trackId,
+                currentLoved = original,
+                accountOperation = accountOperation,
+            )
+            val optimistic = request.optimisticLoved
+            withContext(Dispatchers.Main.immediate) {
+                if (activeAccountSnapshot() == account) {
+                    favoriteToggleGeneration.incrementAndGet()
+                    session.applyFavoriteState(trackId, optimistic, account)
+                }
+            }
+            val outcome = request.awaitOutcome()
+            if (!account.isStillCurrent()) {
+                account.removeOptimisticOverrideIfStillObserved(trackId, optimistic)
+                return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
+            }
+            when (outcome) {
+                FavoriteToggleOutcome.ACCOUNT_CHANGED -> {
+                    account.removeOptimisticOverrideIfStillObserved(trackId, optimistic)
+                    return@future SessionResult(SessionError.ERROR_PERMISSION_DENIED)
+                }
+                FavoriteToggleOutcome.FAILED -> SessionResult(SessionError.ERROR_IO)
+                FavoriteToggleOutcome.CONFIRMED,
+                FavoriteToggleOutcome.RECONCILED,
+                FavoriteToggleOutcome.SUPERSEDED,
+                -> SessionResult(SessionResult.RESULT_SUCCESS)
+            }
+        }
+    }
+
+    private fun activeAccountSnapshot(): ActiveAccount? {
+        val observed = observedAccount.get()
+        val session = observed.session ?: return null
+        if (!observed.initialized) return null
+        return ActiveAccount(session = session, generation = observed.generation)
+    }
+
+    private suspend fun ActiveAccount.isStillCurrent(): Boolean {
+        val observed = observedAccount.get()
+        return observed.initialized &&
+            observed.generation == generation &&
+            observed.session == session &&
+            authRepository.session.first() == session
+    }
+
+    private fun ActiveAccount.removeOptimisticOverrideIfStillObserved(
+        trackId: String,
+        optimistic: Boolean,
+    ) {
+        val observed = observedAccount.get()
+        if (observed.generation == generation && observed.session == session) {
+            favoriteStateOverrides[trackId]?.let { override ->
+                if (override.account == this && override.loved == optimistic) {
+                    favoriteStateOverrides.remove(trackId, override)
+                }
+            }
         }
     }
 
@@ -410,8 +605,11 @@ class HypeMediaLibraryCallback @Inject constructor(
         session: MediaLibrarySession,
         browser: MediaSession.ControllerInfo,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<MediaItem>> =
-        Futures.immediateFuture(
+    ): ListenableFuture<LibraryResult<MediaItem>> {
+        if (!browser.canControl(session)) {
+            return permissionDeniedLibraryResult()
+        }
+        return Futures.immediateFuture(
             LibraryResult.ofItem(
                 rootItem(),
                 // Legacy-stub hosts (projected AA, AAOS Media Center) read
@@ -421,6 +619,7 @@ class HypeMediaLibraryCallback @Inject constructor(
                 paramsWithHintsFor(HypeMediaIds.root, params),
             ),
         )
+    }
 
     override fun onGetChildren(
         session: MediaLibrarySession,
@@ -429,19 +628,33 @@ class HypeMediaLibraryCallback @Inject constructor(
         page: Int,
         pageSize: Int,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
-        callbackScope.future {
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+        if (
+            !browser.canControl(session) ||
+            (parentId.isAccountBackedMediaId() && !browser.canReadAccount(session))
+        ) {
+            return permissionDeniedLibraryResult()
+        }
+        return callbackScope.future {
             loadChildrenResultSuspend(parentId, page, pageSize, params)
         }
+    }
 
     override fun onGetItem(
         session: MediaLibrarySession,
         browser: MediaSession.ControllerInfo,
         mediaId: String,
-    ): ListenableFuture<LibraryResult<MediaItem>> =
-        callbackScope.future {
+    ): ListenableFuture<LibraryResult<MediaItem>> {
+        if (
+            !browser.canControl(session) ||
+            (mediaId.isAccountBackedMediaId() && !browser.canReadAccount(session))
+        ) {
+            return permissionDeniedLibraryResult()
+        }
+        return callbackScope.future {
             loadItemResultSuspend(mediaId)
         }
+    }
 
     /**
      * Warms the search cache and notifies the controller that
@@ -457,16 +670,21 @@ class HypeMediaLibraryCallback @Inject constructor(
         browser: MediaSession.ControllerInfo,
         query: String,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<Void>> = callbackScope.future {
-        val firstPage = runSuspendCatchingPreservingCancellation {
-            searchRepository.searchTracks(SearchQuery(query), page = 1, count = DefaultPageSize).size
-        }.getOrDefault(0)
-        // Hosts trust this count for paging. A full first page means more
-        // results likely exist, so report the pageable ceiling instead of
-        // capping every search at the first 20.
-        val reportedCount = if (firstPage >= DefaultPageSize) DefaultPageSize * MaxPages else firstPage
-        session.notifySearchResultChanged(browser, query, reportedCount, params)
-        LibraryResult.ofVoid(params)
+    ): ListenableFuture<LibraryResult<Void>> {
+        if (!browser.canControl(session)) {
+            return permissionDeniedLibraryResult()
+        }
+        return callbackScope.future {
+            val firstPage = runSuspendCatchingPreservingCancellation {
+                searchRepository.searchTracks(SearchQuery(query), page = 1, count = DefaultPageSize).size
+            }.getOrDefault(0)
+            // Hosts trust this count for paging. A full first page means more
+            // results likely exist, so report the pageable ceiling instead of
+            // capping every search at the first 20.
+            val reportedCount = if (firstPage >= DefaultPageSize) DefaultPageSize * MaxPages else firstPage
+            session.notifySearchResultChanged(browser, query, reportedCount, params)
+            LibraryResult.ofVoid(params)
+        }
     }
 
     override fun onGetSearchResult(
@@ -476,8 +694,11 @@ class HypeMediaLibraryCallback @Inject constructor(
         page: Int,
         pageSize: Int,
         params: MediaLibraryService.LibraryParams?,
-    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
-        callbackScope.future {
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+        if (!browser.canControl(session)) {
+            return permissionDeniedLibraryResult()
+        }
+        return callbackScope.future {
             LibraryResult.ofItemList(
                 ImmutableList.copyOf(
                     loadSearchResultsSuspend(query, page, pageSize),
@@ -485,13 +706,23 @@ class HypeMediaLibraryCallback @Inject constructor(
                 searchParamsWithHints(params),
             )
         }
+    }
 
     override fun onAddMediaItems(
         mediaSession: MediaSession,
         controller: MediaSession.ControllerInfo,
         mediaItems: List<MediaItem>,
-    ): ListenableFuture<List<MediaItem>> =
-        callbackScope.future { resolveMediaItemsSuspend(mediaItems) }
+    ): ListenableFuture<List<MediaItem>> {
+        if (!controller.canControl(mediaSession)) {
+            return permissionDeniedFuture()
+        }
+        return callbackScope.future {
+            resolveMediaItemsSuspend(
+                mediaItems = mediaItems,
+                allowCallerLocalConfiguration = controller.uid == Process.myUid(),
+            )
+        }
+    }
 
     override fun onSetMediaItems(
         mediaSession: MediaSession,
@@ -499,8 +730,20 @@ class HypeMediaLibraryCallback @Inject constructor(
         mediaItems: List<MediaItem>,
         startIndex: Int,
         startPositionMs: Long,
-    ): ListenableFuture<MediaItemsWithStartPosition> =
-        callbackScope.future { resolveMediaItemsWithStartPositionSuspend(mediaItems, startIndex, startPositionMs) }
+    ): ListenableFuture<MediaItemsWithStartPosition> {
+        if (!controller.canControl(mediaSession)) {
+            return permissionDeniedFuture()
+        }
+        return callbackScope.future {
+            resolveMediaItemsWithStartPositionSuspend(
+                mediaItems = mediaItems,
+                startIndex = startIndex,
+                startPositionMs = startPositionMs,
+                allowCallerLocalConfiguration = controller.uid == Process.myUid(),
+                allowAccountBackedSources = controller.canReadAccount(mediaSession),
+            )
+        }
+    }
 
     /**
      * System UI's "recently played" resumption tile and Bluetooth play after
@@ -510,29 +753,54 @@ class HypeMediaLibraryCallback @Inject constructor(
     override fun onPlaybackResumption(
         mediaSession: MediaSession,
         controller: MediaSession.ControllerInfo,
-    ): ListenableFuture<MediaItemsWithStartPosition> = callbackScope.future {
-        val recent = runSuspendCatchingPreservingCancellation {
-            meRepository.history(page = 1, count = MaxPageSize)
-        }.getOrDefault(emptyList())
-        check(recent.isNotEmpty()) { "No local playback history to resume from" }
-        val items = recent
-            .map { it.toPlayableItem(HypeMediaIds.history, sourcePage = 0, sourcePageSize = MaxPageSize) }
-            .toMutableList()
-            .also { it[0] = withInlineArtwork(it[0]) }
-        MediaItemsWithStartPosition(items, 0, 0L)
+        isForPlayback: Boolean,
+    ): ListenableFuture<MediaItemsWithStartPosition> {
+        val isMediaButtonFallback = controller.isMediaButtonFallback()
+        if (
+            (!controller.canControl(mediaSession) && !isMediaButtonFallback) ||
+            (!isMediaButtonFallback && !controller.canReadAccount(mediaSession))
+        ) {
+            return permissionDeniedFuture()
+        }
+        return callbackScope.future {
+            val expectedSession = checkNotNull(authRepository.session.first()) {
+                "Sign-in is required for playback resumption"
+            }
+            val itemLimit = if (isForPlayback) MaxPageSize else 1
+            val recent = runSuspendCatchingPreservingCancellation {
+                meRepository.history(page = 1, count = itemLimit).take(itemLimit)
+            }.getOrDefault(emptyList())
+            check(authRepository.session.first() == expectedSession) {
+                "Account changed while restoring playback history"
+            }
+            check(recent.isNotEmpty()) { "No local playback history to resume from" }
+            val items = recent.map {
+                it.toPlayableItem(HypeMediaIds.history, sourcePage = 0, sourcePageSize = MaxPageSize)
+            }
+            MediaItemsWithStartPosition(items, 0, 0L)
+        }
     }
+
+    private fun <T : Any> permissionDeniedLibraryResult(): ListenableFuture<LibraryResult<T>> =
+        Futures.immediateFuture(LibraryResult.ofError<T>(SessionError.ERROR_PERMISSION_DENIED))
+
+    private fun <T> permissionDeniedFuture(): ListenableFuture<T> =
+        Futures.immediateFailedFuture(SecurityException("Controller is not authorized for this media session"))
 
     private suspend fun loadChildrenSuspend(parentId: String, page: Int, pageSize: Int): List<MediaItem> =
         runSuspendCatchingPreservingCancellation {
             loadChildrenInternalSuspend(parentId, page, pageSize)
         }.getOrDefault(emptyList())
 
-    private suspend fun resolveMediaItemsSuspend(mediaItems: List<MediaItem>): List<MediaItem> =
-        mediaItems.map { mediaItem ->
-            if (mediaItem.localConfiguration != null) {
+    private suspend fun resolveMediaItemsSuspend(
+        mediaItems: List<MediaItem>,
+        allowCallerLocalConfiguration: Boolean,
+    ): List<MediaItem> =
+        mediaItems.mapNotNull { mediaItem ->
+            if (allowCallerLocalConfiguration && mediaItem.localConfiguration != null) {
                 mediaItem
             } else {
-                loadPlayableTrackItem(mediaItem.mediaId) ?: mediaItem
+                loadPlayableTrackItem(mediaItem.mediaId)
             }
         }
 
@@ -540,6 +808,8 @@ class HypeMediaLibraryCallback @Inject constructor(
         mediaItems: List<MediaItem>,
         startIndex: Int,
         startPositionMs: Long,
+        allowCallerLocalConfiguration: Boolean,
+        allowAccountBackedSources: Boolean,
     ): MediaItemsWithStartPosition {
         // Assistant voice search ("Play X on Hype Machine") arrives as a
         // single URI-less item with an empty mediaId and the spoken query in
@@ -550,10 +820,7 @@ class HypeMediaLibraryCallback @Inject constructor(
             if (selectedItem.mediaId.isBlank() && selectedItem.localConfiguration == null) {
                 val voiceQueue = loadVoiceRequestQueue(selectedItem.requestMetadata.searchQuery)
                 if (voiceQueue.isNotEmpty()) {
-                    val withArtwork = voiceQueue.toMutableList().also {
-                        it[0] = withInlineArtwork(it[0])
-                    }
-                    return MediaItemsWithStartPosition(withArtwork, 0, startPositionMs)
+                    return MediaItemsWithStartPosition(voiceQueue, 0, startPositionMs)
                 }
             }
         }
@@ -566,116 +833,44 @@ class HypeMediaLibraryCallback @Inject constructor(
             // wouldn't be found on its page, degrading to a one-track queue.
             val sourcePageSize = HypeMediaIds.parseTrackSourcePageSize(selectedItem.mediaId)
                 .takeIf { it > 0 } ?: MaxPageSize
-            if (selectedTrackId != null && sourceId != null) {
+            if (
+                selectedTrackId != null &&
+                sourceId != null &&
+                (allowAccountBackedSources || !sourceId.isAccountBackedMediaId())
+            ) {
                 val sourceQueue = loadChildrenSuspend(sourceId, page = sourcePage, pageSize = sourcePageSize)
                 val selectedIndex = sourceQueue.indexOfFirst { item ->
                     HypeMediaIds.parseTrackId(item.mediaId) == selectedTrackId
                 }
                 if (selectedIndex >= 0) {
-                    val withArtwork = sourceQueue.toMutableList().also {
-                        it[selectedIndex] = withInlineArtwork(it[selectedIndex])
-                    }
-                    return MediaItemsWithStartPosition(withArtwork, selectedIndex, startPositionMs)
+                    return MediaItemsWithStartPosition(sourceQueue, selectedIndex, startPositionMs)
                 }
             }
         }
 
-        val resolvedItems = resolveMediaItemsSuspend(mediaItems).toMutableList()
+        val resolvedItems = resolveMediaItemsSuspend(
+            mediaItems = mediaItems,
+            allowCallerLocalConfiguration = allowCallerLocalConfiguration,
+        )
         val resolvedStartIndex = if (resolvedItems.isEmpty()) {
             0
         } else {
             startIndex.coerceIn(0, resolvedItems.lastIndex)
         }
-        if (resolvedItems.isNotEmpty()) {
-            // Prefetch artwork only for the item that's about to play; the rest
-            // stay URI-only and the session's BitmapLoader fetches them when
-            // they become the current item.
-            resolvedItems[resolvedStartIndex] = withInlineArtwork(resolvedItems[resolvedStartIndex])
-        }
         return MediaItemsWithStartPosition(resolvedItems, resolvedStartIndex, startPositionMs)
     }
 
-    /**
-     * Pre-fetches the artwork URI via OkHttp and embeds optimized bytes inline
-     * as `MediaMetadata.artworkData` so AAOS Now Playing does not have to do its
-     * own HTTPS fetch. The bytes are downsampled and cached because Android Auto
-     * hosts pass metadata over Binder; full-resolution artwork makes player
-     * open/track changes noticeably slower on real head units.
-     */
-    private suspend fun withInlineArtwork(item: MediaItem): MediaItem {
-        val uri = item.mediaMetadata.artworkUri ?: return item
-        val cacheKey = uri.toString()
-        val bytes = inlineArtworkCache.get(cacheKey) ?: runSuspendCatchingPreservingCancellation {
-            val request = okhttp3.Request.Builder().url(cacheKey).build()
-            okHttpClient.newCall(request).execute().use { resp ->
-                val source = resp.body?.bytes() ?: return@use null
-                optimizedInlineArtworkData(source)
-            }
-        }.getOrNull()?.also { inlineArtworkCache.put(cacheKey, it) } ?: return item
-        val updated = item.mediaMetadata.buildUpon()
-            .setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-            .build()
-        return item.buildUpon().setMediaMetadata(updated).build()
-    }
-
-    private fun optimizedInlineArtworkData(source: ByteArray): ByteArray? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(source, 0, source.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            return source
-        }
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, InlineArtworkMaxSizePx)
-        }
-        val decoded = BitmapFactory.decodeByteArray(source, 0, source.size, options) ?: return source
-        var scaled: Bitmap? = null
-        return try {
-            val maxSide = maxOf(decoded.width, decoded.height)
-            val bitmap = if (maxSide > InlineArtworkMaxSizePx) {
-                val scale = InlineArtworkMaxSizePx.toFloat() / maxSide
-                scaled = Bitmap.createScaledBitmap(
-                    decoded,
-                    (decoded.width * scale).roundToInt().coerceAtLeast(1),
-                    (decoded.height * scale).roundToInt().coerceAtLeast(1),
-                    true,
-                )
-                scaled
-            } else {
-                decoded
-            } ?: decoded
-            ByteArrayOutputStream().use { output ->
-                if (bitmap.compress(Bitmap.CompressFormat.JPEG, InlineArtworkJpegQuality, output)) {
-                    output.toByteArray()
-                } else {
-                    source
-                }
-            }
-        } finally {
-            scaled?.recycle()
-            decoded.recycle()
-        }
-    }
-
-    private fun calculateInSampleSize(width: Int, height: Int, maxSize: Int): Int {
-        var inSampleSize = 1
-        val maxSide = maxOf(width, height)
-        while (maxSide / inSampleSize > maxSize * 2) {
-            inSampleSize *= 2
-        }
-        return inSampleSize
-    }
-
-    // Reflection-driven tests call this by name; see the note on loadChildren.
-    @Suppress("unused")
-    private fun withInlineArtworkForTests(item: MediaItem): MediaItem =
-        kotlinx.coroutines.runBlocking { withInlineArtwork(item) }
-
     private suspend fun loadPlaylistItem(mediaId: String): MediaItem? =
         HypeMediaIds.parsePlaylistId(mediaId)?.let { playlistId ->
+            val expectedSession = authRepository.session.first() ?: return@let null
             val title = runSuspendCatchingPreservingCancellation {
                 meRepository.playlistNames().firstOrNull { it.id == playlistId }?.name
             }.getOrNull() ?: context.getString(R.string.auto_playlist_fallback_name, playlistId)
-            browsableItem(HypeMediaIds.playlist(playlistId), title)
+            if (authRepository.session.first() == expectedSession) {
+                browsableItem(HypeMediaIds.playlist(playlistId), title)
+            } else {
+                null
+            }
         }
 
     private suspend fun loadPlayableTrackItem(mediaId: String): MediaItem? =
@@ -699,11 +894,19 @@ class HypeMediaLibraryCallback @Inject constructor(
     private suspend fun loadSearchResultsSuspend(query: String, page: Int, pageSize: Int): List<MediaItem> =
         runSuspendCatchingPreservingCancellation {
             val sourceId = HypeMediaIds.search(query)
+            val sourcePage = page.coerceAtLeast(0)
+            val sourcePageSize = pageSize.sanitizedPageSize()
             searchRepository.searchTracks(
                 SearchQuery(query),
-                page = page.toApiPage(),
-                count = pageSize.sanitizedPageSize(),
-            ).map { it.toPlayableItem(sourceId) }
+                page = sourcePage.toApiPage(),
+                count = sourcePageSize,
+            ).map { track ->
+                track.toPlayableItem(
+                    sourceId = sourceId,
+                    sourcePage = sourcePage,
+                    sourcePageSize = sourcePageSize,
+                )
+            }
         }.getOrDefault(emptyList())
 
     /**
@@ -808,7 +1011,7 @@ class HypeMediaLibraryCallback @Inject constructor(
                     .map { it.toBrowsableItem() }
                 items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_playlists_title, R.string.auto_empty_playlists_subtitle) }
             }
-            HypeMediaIds.history -> {
+            HypeMediaIds.history -> requireSession(parentId) {
                 val items = meRepository.history(page = apiPage, count = count).map { it.toPlayableItem(parentId, sourcePage, count) }
                 items.ifEmptyOnFirstPage(page) { emptyStateItem(parentId, R.string.auto_empty_history_title, R.string.auto_empty_history_subtitle) }
             }
@@ -842,19 +1045,27 @@ class HypeMediaLibraryCallback @Inject constructor(
         parentId: String,
         loadSignedIn: suspend () -> List<MediaItem>,
     ): List<MediaItem> {
-        val session = authRepository.session.first()
-        return if (session == null) {
+        val expectedSession = authRepository.session.first()
+            ?: return listOf(signInPromptItem(parentId))
+        val loaded = runSuspendCatchingPreservingCancellation {
+            loadSignedIn()
+        }.getOrElse { error ->
+            if (error.isUnauthorizedResponse()) {
+                listOf(signInPromptItem(parentId))
+            } else {
+                listOf(privateSectionUnavailableItem(parentId))
+            }
+        }
+        val currentSession = authRepository.session.first()
+        return if (currentSession == expectedSession) {
+            loaded
+        } else if (currentSession == null) {
             listOf(signInPromptItem(parentId))
         } else {
-            runSuspendCatchingPreservingCancellation {
-                loadSignedIn()
-            }.getOrElse { error ->
-                if (error.isUnauthorizedResponse()) {
-                    listOf(signInPromptItem(parentId))
-                } else {
-                    listOf(privateSectionUnavailableItem(parentId))
-                }
-            }
+            // The load belonged to another exact username/token pair. Do not
+            // return its private rows to a controller now browsing the new
+            // account; a subsequent host retry can load fresh data.
+            listOf(privateSectionUnavailableItem(parentId))
         }
     }
 
@@ -948,20 +1159,36 @@ class HypeMediaLibraryCallback @Inject constructor(
     private fun loadChildren(parentId: String, pageSize: Int): List<MediaItem> =
         kotlinx.coroutines.runBlocking { loadChildrenSuspend(parentId, page = 0, pageSize = pageSize) }
 
+    private fun loadSearchResults(query: String, page: Int, pageSize: Int): List<MediaItem> =
+        kotlinx.coroutines.runBlocking { loadSearchResultsSuspend(query, page, pageSize) }
+
     private fun loadItem(mediaId: String): MediaItem? =
         kotlinx.coroutines.runBlocking {
             runSuspendCatchingPreservingCancellation { loadItemInternalSuspend(mediaId) }.getOrNull()
         }
 
     private fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> =
-        kotlinx.coroutines.runBlocking { resolveMediaItemsSuspend(mediaItems) }
+        kotlinx.coroutines.runBlocking {
+            resolveMediaItemsSuspend(
+                mediaItems = mediaItems,
+                allowCallerLocalConfiguration = false,
+            )
+        }
 
     private fun resolveMediaItemsWithStartPosition(
         mediaItems: List<MediaItem>,
         startIndex: Int,
         startPositionMs: Long,
     ): MediaItemsWithStartPosition =
-        kotlinx.coroutines.runBlocking { resolveMediaItemsWithStartPositionSuspend(mediaItems, startIndex, startPositionMs) }
+        kotlinx.coroutines.runBlocking {
+            resolveMediaItemsWithStartPositionSuspend(
+                mediaItems = mediaItems,
+                startIndex = startIndex,
+                startPositionMs = startPositionMs,
+                allowCallerLocalConfiguration = false,
+                allowAccountBackedSources = true,
+            )
+        }
 
     private fun Int.sanitizedPageSize(): Int =
         when {
@@ -1158,32 +1385,5 @@ class HypeMediaLibraryCallback @Inject constructor(
         currentSession?.player?.removeListener(playerListener)
         currentSession = null
         callbackScope.cancel()
-    }
-}
-
-internal data class AutoFavoriteToggleResult(
-    val confirmedLoved: Boolean,
-    val sessionResult: SessionResult,
-)
-
-@UnstableApi
-internal suspend fun resolveAutoFavoriteToggle(
-    meRepository: MeRepository,
-    trackId: String,
-    originalLoved: Boolean,
-): AutoFavoriteToggleResult {
-    val confirmed = runSuspendCatchingPreservingCancellation {
-        meRepository.toggleFavorite(trackId)
-    }.getOrNull()
-    return if (confirmed == null) {
-        AutoFavoriteToggleResult(
-            confirmedLoved = originalLoved,
-            sessionResult = SessionResult(SessionError.ERROR_IO),
-        )
-    } else {
-        AutoFavoriteToggleResult(
-            confirmedLoved = confirmed,
-            sessionResult = SessionResult(SessionResult.RESULT_SUCCESS),
-        )
     }
 }

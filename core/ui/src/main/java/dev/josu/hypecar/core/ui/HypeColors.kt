@@ -16,7 +16,10 @@ object HypeColors {
     // Brand orange — the editorial accent.
     val BrandOrange = Color(0xFFFF8A3D)
     val BrandOrangeStrong = Color(0xFFFF6A21)
-    val BrandOrangeDeep = Color(0xFFC56A3B)
+
+    // Dark enough to carry white text and to remain legible on cream/peach
+    // surfaces (6.2:1 on CreamSurface, 4.5:1 on BrandOrangeWash).
+    val BrandOrangeDeep = Color(0xFF94401F)
     val BrandOrangeSoft = Color(0xFFFFB07B)
     val BrandOrangeWash = Color(0xFFFFC4A2)
 
@@ -44,7 +47,8 @@ object HypeColors {
     val ChromeProgressTrack = Color(0xFF434346)
 
     // Status / system.
-    val Error = Color(0xFFD64545)
+    val ErrorLight = Color(0xFFA83432)
+    val ErrorDark = Color(0xFFFF8A80)
     val Success = Color(0xFF3D9C73)
 
     // Tinted near-neutrals used commonly in the codebase.

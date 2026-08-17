@@ -9,10 +9,15 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.model.FeedItem
+import dev.josu.hypecar.core.model.FeedMode
 import dev.josu.hypecar.core.model.PlaybackQueue
+import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.SearchQuery
 import dev.josu.hypecar.core.model.SearchSort
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
 import dev.josu.hypecar.core.ui.HypeTheme
@@ -41,6 +46,7 @@ class SearchRouteScreenTest {
                         viewModel = SearchViewModel(
                             searchRepository = EmptySearch,
                             playbackRepository = NoOpPlayback,
+                            favoriteSyncManager = searchScreenFavoriteSync(),
                         ),
                     )
                 }
@@ -63,6 +69,7 @@ class SearchRouteScreenTest {
                         viewModel = SearchViewModel(
                             searchRepository = search,
                             playbackRepository = NoOpPlayback,
+                            favoriteSyncManager = searchScreenFavoriteSync(),
                         ),
                     )
                 }
@@ -112,4 +119,15 @@ private object NoOpPlayback : PlaybackRepository {
     override suspend fun toggleShuffle() = Unit
     override suspend fun cycleRepeatMode() = Unit
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
+}
+
+private fun searchScreenFavoriteSync() = FavoriteSyncManager(SearchScreenNoOpMe, NoOpPlayback)
+
+private object SearchScreenNoOpMe : MeRepository {
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun toggleFavorite(trackId: String): Boolean? = null
+    override suspend fun playlistNames(): List<Playlist> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
+    override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }

@@ -2,6 +2,8 @@ package dev.josu.hypecar.core.playback
 
 import android.content.Context
 import android.os.Bundle
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -46,6 +48,7 @@ class HypePlaybackManager @Inject constructor(
 ) : PlaybackRepository {
     private companion object {
         const val Tag = "HypePlaybackManager"
+        const val ListenQualificationMs = 3_000L
 
         val MusicAudioAttributes: AudioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -63,6 +66,10 @@ class HypePlaybackManager @Inject constructor(
      */
     private var consecutivePlaybackErrors = 0
     private val playerListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            beginListenTracking(mediaItem?.let(::trackForMediaItem)?.id)
+        }
+
         override fun onEvents(player: Player, events: Player.Events) {
             if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) && player.playbackState == Player.STATE_READY) {
                 consecutivePlaybackErrors = 0
@@ -72,21 +79,12 @@ class HypePlaybackManager @Inject constructor(
             } else {
                 publishProgressOnly()
             }
-            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-                currentTrack()?.let { track ->
-                    scope.launch {
-                        runSuspendCatchingPreservingCancellation {
-                            historyRepository.postListen(track.id, 0)
-                        }.onFailure {
-                            Log.w(Tag, "Failed to post playback history for ${track.id}", it)
-                        }
-                    }
-                }
-            }
+            syncListenTracking()
         }
 
         override fun onPlayerError(error: PlaybackException) {
             Log.w(Tag, "Player error while loading media", error)
+            failCurrentListenTracking()
             val failedTrackId = currentTrack()?.id
             consecutivePlaybackErrors += 1
             val wholeQueueFailed = consecutivePlaybackErrors >= player.mediaItemCount.coerceAtLeast(1)
@@ -113,15 +111,23 @@ class HypePlaybackManager @Inject constructor(
         }
     }
 
-    val player: ExoPlayer = ExoPlayer.Builder(context)
-        .setAudioAttributes(MusicAudioAttributes, true)
-        .setHandleAudioBecomingNoisy(true)
-        .setPauseAtEndOfMediaItems(false)
-        .setWakeMode(C.WAKE_MODE_NETWORK)
-        .build()
-        .also {
-            it.addListener(playerListener)
+    private val playerDelegate = lazy(LazyThreadSafetyMode.NONE) {
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "ExoPlayer must be initialized on the main thread"
         }
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(MusicAudioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
+            .setPauseAtEndOfMediaItems(false)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .build()
+            .also {
+                it.addListener(playerListener)
+            }
+    }
+    val player: ExoPlayer by playerDelegate
+    internal val isPlayerInitialized: Boolean
+        get() = playerDelegate.isInitialized()
 
     private val trackIndex = linkedMapOf<String, Track>()
     private var errorEventCounter: Long = 0
@@ -132,10 +138,15 @@ class HypePlaybackManager @Inject constructor(
     private val _queue = MutableStateFlow(PlaybackQueue())
     override val queue: StateFlow<PlaybackQueue> = _queue
     private var progressJob: Job? = null
+    private val listenTracker = PlaybackListenTracker(ListenQualificationMs)
+    private var listenJob: Job? = null
+    private var listenJobIsPosting = false
+    private var listenJobOperationId = 0L
 
     override suspend fun play(tracks: List<Track>, startIndex: Int) {
         if (tracks.isEmpty()) {
             runPlayerCommand("clear empty queue") {
+                beginListenTracking(trackId = null)
                 trackIndex.clear()
                 player.stop()
                 player.clearMediaItems()
@@ -153,7 +164,9 @@ class HypePlaybackManager @Inject constructor(
         }
         runPlayerCommand("play") {
             foregroundServiceStarter.ensureStarted()
-            player.setForegroundMode(true)
+            // A new queue is a new playback occurrence even when it starts
+            // with the same track and index as the previous queue.
+            beginListenTracking(trackId = null)
             trackIndex.clear()
             consecutivePlaybackErrors = 0
             tracks.forEach { trackIndex[it.id] = it }
@@ -247,6 +260,27 @@ class HypePlaybackManager @Inject constructor(
             lovedCount = (existing.lovedCount + lovedCountDelta).coerceAtLeast(0),
         )
         trackIndex[updated.id] = updated
+        // The media session can outlive/recreate its callback. Keep the
+        // authoritative favorite snapshot in the MediaItem as well as the
+        // in-memory index so a recreated callback never falls back to stale
+        // metadata extras.
+        for (index in 0 until player.mediaItemCount) {
+            val mediaItem = player.getMediaItemAt(index)
+            if (mediaItem.mediaId.rawTrackId() != updated.id) continue
+            val extras = Bundle(mediaItem.mediaMetadata.extras ?: Bundle()).apply {
+                putBoolean(MediaItemExtras.IsLoved, updated.isLoved)
+                putInt(MediaItemExtras.LovedCount, updated.lovedCount)
+            }
+            val mediaMetadata = mediaItem.mediaMetadata.buildUpon()
+                .setExtras(extras)
+                .build()
+            player.replaceMediaItem(
+                index,
+                mediaItem.buildUpon()
+                    .setMediaMetadata(mediaMetadata)
+                    .build(),
+            )
+        }
         publishQueueState()
     }
 
@@ -302,6 +336,74 @@ class HypePlaybackManager @Inject constructor(
         }
     }
 
+    private fun beginListenTracking(trackId: String?) {
+        cancelListenJob()
+        listenTracker.onMediaItemTransition(trackId)
+    }
+
+    private fun failCurrentListenTracking() {
+        cancelListenJob()
+        listenTracker.onPlaybackError(SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * Qualifies history from elapsed time spent actually playing, rather than
+     * from position alone. A seek past three seconds therefore cannot create a
+     * listen, while pauses and buffering do not consume the threshold.
+     */
+    private fun syncListenTracking() {
+        val nowMs = SystemClock.elapsedRealtime()
+        val isReadyAndPlaying = player.playbackState == Player.STATE_READY && player.isPlaying
+        val pending = listenTracker.onPlaybackActiveChanged(isReadyAndPlaying, nowMs)
+
+        if (!isReadyAndPlaying) {
+            // Once qualified, let the single repository write finish even if
+            // the user pauses. Transitions and errors still cancel it.
+            if (!listenJobIsPosting) cancelListenJob()
+            return
+        }
+        if (pending == null || listenJob?.isActive == true) return
+
+        val operationId = ++listenJobOperationId
+        listenJob = scope.launch {
+            try {
+                // A positive delay guarantees this launch suspends before the
+                // field assignment above completes on Dispatchers.Main.immediate.
+                delay(pending.remainingMs.coerceAtLeast(1L))
+                val completionTimeMs = SystemClock.elapsedRealtime()
+                val stillPlaying = player.playbackState == Player.STATE_READY && player.isPlaying
+                listenTracker.onPlaybackActiveChanged(stillPlaying, completionTimeMs)
+                if (!stillPlaying) return@launch
+
+                val trackId = listenTracker.recordIfQualified(
+                    sessionId = pending.sessionId,
+                    nowMs = completionTimeMs,
+                ) ?: return@launch
+                listenJobIsPosting = true
+                val positionSeconds = (player.currentPosition.coerceAtLeast(0L) / 1_000L)
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+                runSuspendCatchingPreservingCancellation {
+                    historyRepository.postListen(trackId, positionSeconds)
+                }.onFailure {
+                    Log.w(Tag, "Failed to post playback history for $trackId", it)
+                }
+            } finally {
+                if (listenJobOperationId == operationId) {
+                    listenJob = null
+                    listenJobIsPosting = false
+                }
+            }
+        }
+    }
+
+    private fun cancelListenJob() {
+        listenJobOperationId += 1
+        listenJob?.cancel()
+        listenJob = null
+        listenJobIsPosting = false
+    }
+
     private fun publishProgressOnly() {
         val current = _queue.value
         val position = runCatching { player.currentPosition.coerceAtLeast(0L) }.getOrDefault(current.positionMs)
@@ -354,6 +456,80 @@ class HypePlaybackManager @Inject constructor(
         }
 }
 
+internal data class PendingListen(
+    val sessionId: Long,
+    val remainingMs: Long,
+)
+
+/**
+ * Small deterministic state machine for one playback occurrence. Time is
+ * supplied by the caller so tests cover skips, failures, pauses, and repeats
+ * without sleeping or depending on ExoPlayer's asynchronous test renderer.
+ */
+internal class PlaybackListenTracker(
+    private val qualificationMs: Long,
+) {
+    private var sessionId = 0L
+    private var trackId: String? = null
+    private var playedMs = 0L
+    private var activeSinceMs: Long? = null
+    private var recorded = false
+    private var failed = false
+
+    init {
+        require(qualificationMs > 0L)
+    }
+
+    fun onMediaItemTransition(trackId: String?) {
+        sessionId += 1
+        this.trackId = trackId
+        playedMs = 0L
+        activeSinceMs = null
+        recorded = false
+        failed = false
+    }
+
+    fun onPlaybackActiveChanged(isActive: Boolean, nowMs: Long): PendingListen? {
+        accumulatePlayingTime(nowMs)
+        activeSinceMs = if (isActive && canRecord()) nowMs else null
+        return pendingListen()
+    }
+
+    fun onPlaybackError(nowMs: Long) {
+        accumulatePlayingTime(nowMs)
+        sessionId += 1
+        activeSinceMs = null
+        failed = true
+    }
+
+    fun recordIfQualified(sessionId: Long, nowMs: Long): String? {
+        if (this.sessionId != sessionId || activeSinceMs == null || !canRecord()) return null
+        accumulatePlayingTime(nowMs)
+        if (playedMs < qualificationMs) return null
+
+        recorded = true
+        activeSinceMs = null
+        return trackId
+    }
+
+    private fun accumulatePlayingTime(nowMs: Long) {
+        val activeSince = activeSinceMs ?: return
+        val elapsedMs = (nowMs - activeSince).coerceAtLeast(0L)
+        playedMs = (playedMs + elapsedMs).coerceAtMost(qualificationMs)
+        activeSinceMs = nowMs
+    }
+
+    private fun pendingListen(): PendingListen? {
+        if (activeSinceMs == null || !canRecord()) return null
+        return PendingListen(
+            sessionId = sessionId,
+            remainingMs = (qualificationMs - playedMs).coerceAtLeast(0L),
+        )
+    }
+
+    private fun canRecord(): Boolean = trackId != null && !recorded && !failed
+}
+
 private fun Track.toMediaItem(cachedAudioUri: String?): MediaItem =
     MediaItem.Builder()
         .setMediaId(id)
@@ -381,21 +557,24 @@ private fun Track.toMediaItem(cachedAudioUri: String?): MediaItem =
         )
         .build()
 
-private fun MediaItem.toFallbackTrack(): Track? {
+internal fun MediaItem.toFallbackTrack(): Track? {
     val trackId = mediaId.rawTrackId().takeIf { it.isNotBlank() } ?: return null
+    val extras = mediaMetadata.extras
+    val albumTitle = mediaMetadata.albumTitle?.toString().orEmpty()
     return Track(
         id = trackId,
         artist = mediaMetadata.artist?.toString().orEmpty(),
         title = mediaMetadata.title?.toString()?.takeIf { it.isNotBlank() } ?: trackId,
-        lovedCount = 0,
-        postedBy = mediaMetadata.albumTitle?.toString().orEmpty(),
-        postedById = 0,
+        lovedCount = extras?.getInt(MediaItemExtras.LovedCount, 0) ?: 0,
+        postedBy = albumTitle.ifBlank { extras?.getString(MediaItemExtras.BlogName).orEmpty() },
+        postedById = extras?.getInt(MediaItemExtras.BlogId, 0) ?: 0,
         postedCount = 0,
-        postDescription = "",
+        postDescription = mediaMetadata.description?.toString().orEmpty(),
         datePostedEpochSeconds = 0L,
         postUrl = "",
         itunesUrl = "",
         thumbnails = TrackThumbnails(large = mediaMetadata.artworkUri?.toString()),
+        isLoved = extras?.getBoolean(MediaItemExtras.IsLoved, false) ?: false,
     )
 }
 

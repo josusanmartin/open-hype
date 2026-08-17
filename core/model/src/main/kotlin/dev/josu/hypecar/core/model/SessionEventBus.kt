@@ -8,10 +8,11 @@ import kotlinx.coroutines.flow.asSharedFlow
  * Process-wide event bus for session lifecycle events that need to fan out
  * across layers without a direct dependency.
  *
- * Today this carries one event — [SessionEvent.Expired] — fired by the
- * `UnauthorizedSessionInterceptor` when the API returns 401. The UI listens
- * (via `AppChromeViewModel`) and surfaces a snackbar so the user isn't
- * silently signed out into an empty Library.
+ * Today this carries one event — [SessionEvent.Expired] — fired after a 401's
+ * rejected token is confirmed to still be the active session and its local
+ * account data has been cleared. The UI listens (via `AppChromeViewModel`)
+ * and surfaces a snackbar so the user isn't silently signed out into an
+ * empty Library.
  *
  * Lives in `core/model` for the same reason as [ScrollToTopBus]: feature
  * modules and data modules both need to talk to it without depending on

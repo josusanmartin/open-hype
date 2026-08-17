@@ -2,13 +2,18 @@ package dev.josu.hypecar.feature.details
 
 import androidx.lifecycle.SavedStateHandle
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.Blog
+import dev.josu.hypecar.core.model.FeedItem
+import dev.josu.hypecar.core.model.FeedMode
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
+import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
+import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,6 +51,7 @@ class DetailsViewModelsTest {
             savedStateHandle = SavedStateHandle(mapOf("blogId" to 22246)),
             catalogRepository = catalog,
             playbackRepository = NoOpPlayback,
+            favoriteSyncManager = detailsFavoriteSync(),
         )
 
         advanceUntilIdle()
@@ -64,6 +70,7 @@ class DetailsViewModelsTest {
             savedStateHandle = SavedStateHandle(mapOf("blogId" to 1)),
             catalogRepository = catalog,
             playbackRepository = NoOpPlayback,
+            favoriteSyncManager = detailsFavoriteSync(),
         )
 
         advanceUntilIdle()
@@ -83,6 +90,7 @@ class DetailsViewModelsTest {
             savedStateHandle = SavedStateHandle(mapOf("username" to "alice")),
             catalogRepository = catalog,
             playbackRepository = NoOpPlayback,
+            favoriteSyncManager = detailsFavoriteSync(),
         )
 
         advanceUntilIdle()
@@ -99,6 +107,7 @@ class DetailsViewModelsTest {
             savedStateHandle = SavedStateHandle(mapOf("blogId" to 1)),
             catalogRepository = catalog,
             playbackRepository = playback,
+            favoriteSyncManager = FavoriteSyncManager(DetailsNoOpMe, playback),
         )
         advanceUntilIdle()
 
@@ -194,4 +203,15 @@ private object NoOpPlayback : PlaybackRepository {
     override suspend fun toggleShuffle() = Unit
     override suspend fun cycleRepeatMode() = Unit
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
+}
+
+private fun detailsFavoriteSync() = FavoriteSyncManager(DetailsNoOpMe, NoOpPlayback)
+
+private object DetailsNoOpMe : MeRepository {
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun toggleFavorite(trackId: String): Boolean? = null
+    override suspend fun playlistNames(): List<Playlist> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
+    override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }

@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -42,6 +45,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -51,11 +59,16 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.josu.hypecar.core.model.repository.OfflineDownloadStatus
 import dev.josu.hypecar.core.model.repository.OfflineRepository
+import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import dev.josu.hypecar.core.ui.HypeColors
 import dev.josu.hypecar.core.ui.hypeTokens
 import dev.josu.hypecar.core.ui.pressFeedback
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import androidx.compose.ui.semantics.error as errorSemantics
 
 private val OfflineQuotaOptions = listOf(
     250L * 1024L * 1024L,
@@ -142,21 +155,31 @@ class OfflineSettingsViewModel @Inject constructor(
     private val offlineRepository: OfflineRepository,
 ) : ViewModel() {
     val status: StateFlow<OfflineDownloadStatus> = offlineRepository.status
+    private val _actionFailed = MutableStateFlow(false)
+    val actionFailed: StateFlow<Boolean> = _actionFailed.asStateFlow()
 
     fun setEnabled(enabled: Boolean) {
-        viewModelScope.launch { offlineRepository.setEnabled(enabled) }
+        launchAction { offlineRepository.setEnabled(enabled) }
     }
 
     fun setQuota(bytes: Long) {
-        viewModelScope.launch { offlineRepository.setQuotaBytes(bytes) }
+        launchAction { offlineRepository.setQuotaBytes(bytes) }
     }
 
     fun syncNow() {
-        viewModelScope.launch { offlineRepository.syncFavorites() }
+        launchAction { offlineRepository.syncFavorites() }
     }
 
     fun clearDownloads() {
-        viewModelScope.launch { offlineRepository.clearDownloads() }
+        launchAction { offlineRepository.clearDownloads() }
+    }
+
+    private fun launchAction(action: suspend () -> Unit) {
+        viewModelScope.launch {
+            _actionFailed.value = false
+            runSuspendCatchingPreservingCancellation(action)
+                .onFailure { _actionFailed.value = true }
+        }
     }
 }
 
@@ -166,7 +189,13 @@ fun OfflineSettingsRoute(
     compactMode: Boolean = false,
 ) {
     val status by viewModel.status.collectAsStateWithLifecycle()
-    val model = OfflineSettingsUiModel.fromStatus(status)
+    val actionFailed by viewModel.actionFailed.collectAsStateWithLifecycle()
+    // The concrete exception may contain device paths or implementation
+    // details. The screen only needs a marker; OfflineErrorMessage renders the
+    // localized, user-safe copy.
+    val model = OfflineSettingsUiModel.fromStatus(status).let { current ->
+        if (actionFailed && current.error == null) current.copy(error = "action_failed") else current
+    }
     var showClearConfirm by remember { mutableStateOf(false) }
     val onClearRequested: () -> Unit = { showClearConfirm = true }
     val onClearConfirmed: () -> Unit = {
@@ -180,7 +209,10 @@ fun OfflineSettingsRoute(
             text = { Text(stringResource(R.string.offline_clear_confirm_body)) },
             confirmButton = {
                 TextButton(onClick = onClearConfirmed) {
-                    Text(stringResource(R.string.offline_clear_confirm_action), color = Color(0xFFFF7A70))
+                    Text(
+                        stringResource(R.string.offline_clear_confirm_action),
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             },
             dismissButton = {
@@ -227,6 +259,7 @@ fun OfflineSettingsRoute(
             text = stringResource(R.string.settings_title),
             color = Color.White,
             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
+            modifier = Modifier.semantics { heading() },
         )
         Text(
             text = stringResource(R.string.settings_subtitle),
@@ -243,7 +276,7 @@ fun OfflineSettingsRoute(
         Spacer(modifier = Modifier.weight(1f))
         Text(
             text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
-            color = Color(0xFF6F6760),
+            color = Color(0xFF9A918B),
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.fillMaxWidth(),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -271,6 +304,8 @@ private fun AutomotiveOfflineSettingsScreen(
                     ),
                 ),
             )
+            .statusBarsPadding()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState())
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -283,6 +318,7 @@ private fun AutomotiveOfflineSettingsScreen(
                 text = stringResource(R.string.settings_title),
                 color = Color.White,
                 style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
+                modifier = Modifier.semantics { heading() },
             )
             Text(
                 text = stringResource(R.string.settings_aaos_subtitle),
@@ -311,6 +347,7 @@ private fun AutomotiveOfflineSettingsScreen(
                         Text(
                             text = stringResource(R.string.settings_offline_listening),
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.semantics { heading() },
                         )
                         Text(
                             text = syncStatusLabel(model.syncStatus),
@@ -325,7 +362,9 @@ private fun AutomotiveOfflineSettingsScreen(
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectableGroup(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -333,6 +372,7 @@ private fun AutomotiveOfflineSettingsScreen(
                         text = stringResource(R.string.settings_storage_limit),
                         color = Color(0xFFFFB08A),
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.semantics { heading() },
                     )
                     OfflineQuotaOptions.forEach { quota ->
                         CompactQuotaOption(
@@ -375,12 +415,8 @@ private fun AutomotiveOfflineSettingsScreen(
                     )
                 }
 
-                model.error?.let {
-                    Text(
-                        text = it,
-                        color = Color(0xFFFF7A70),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                if (model.error != null) {
+                    OfflineErrorMessage()
                 }
             }
         }
@@ -397,11 +433,17 @@ private fun CompactQuotaOption(
     val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = Modifier
+            .sizeIn(minHeight = 48.dp)
             .clip(shape)
             .background(if (selected) Color(0xFFEBDDFF) else Color.Transparent)
             .border(1.dp, if (selected) Color(0xFFEBDDFF) else Color(0xFF756D7A), shape)
             .pressFeedback(enabled = enabled, pressedScale = 0.95f, label = "compactQuotaPress")
-            .clickable(enabled = enabled, onClick = onClick)
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(
@@ -426,6 +468,7 @@ private fun CompactActionButton(
     val shape = RoundedCornerShape(999.dp)
     Box(
         modifier = Modifier
+            .sizeIn(minHeight = 48.dp)
             .clip(shape)
             .background(
                 when {
@@ -440,7 +483,7 @@ private fun CompactActionButton(
                 shape,
             )
             .pressFeedback(enabled = enabled, pressedScale = 0.96f, label = "compactActionPress")
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 7.dp),
     ) {
         Text(
@@ -477,6 +520,7 @@ private fun OfflineListeningPanel(
                     text = stringResource(R.string.settings_offline_listening),
                     color = Color.White,
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.semantics { heading() },
                 )
                 Text(
                     text = stringResource(
@@ -511,6 +555,7 @@ private fun OfflineListeningPanel(
                 text = stringResource(R.string.settings_storage_limit),
                 color = Color(0xFFFF8F58),
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.semantics { heading() },
             )
             Text(
                 text = formatBytesLabel(model.quotaBytes),
@@ -526,12 +571,8 @@ private fun OfflineListeningPanel(
 
         StorageUsageCard(model = model)
 
-        model.error?.let {
-            Text(
-                text = it,
-                color = Color(0xFFFF7A70),
-                style = MaterialTheme.typography.bodySmall,
-            )
+        if (model.error != null) {
+            OfflineErrorMessage()
         }
 
         SettingsDivider(modifier = Modifier.padding(top = 2.dp))
@@ -546,7 +587,7 @@ private fun OfflineListeningPanel(
         SettingsDivider()
         SettingsActionRow(
             label = stringResource(R.string.settings_action_clear),
-            enabled = true,
+            enabled = model.usedBytes > 0L || model.downloadedTrackCount > 0,
             icon = Icons.Default.DeleteOutline,
             onClick = onClear,
         )
@@ -560,7 +601,9 @@ private fun QuotaPillRow(
     onQuotaSelected: (Long) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         OfflineQuotaOptions.forEach { quota ->
@@ -586,6 +629,7 @@ private fun StorageLimitPill(
     val shape = RoundedCornerShape(12.dp)
     Box(
         modifier = modifier
+            .sizeIn(minHeight = 48.dp)
             .clip(shape)
             .background(
                 when {
@@ -603,7 +647,12 @@ private fun StorageLimitPill(
                 shape = shape,
             )
             .pressFeedback(enabled = enabled, pressedScale = 0.96f, label = "quotaPillPress")
-            .clickable(enabled = enabled, onClick = onClick)
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -694,7 +743,7 @@ private fun SettingsActionRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .pressFeedback(enabled = enabled, pressedScale = 0.985f, label = "settingsActionRowPress")
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -718,6 +767,22 @@ private fun SettingsActionRow(
             modifier = Modifier.size(30.dp),
         )
     }
+}
+
+@Composable
+private fun OfflineErrorMessage(modifier: Modifier = Modifier) {
+    val message = stringResource(R.string.settings_error_sync)
+    Text(
+        text = message,
+        // The settings canvas is always dark, even when the system theme is
+        // light, so bind this message to the dark-surface error token.
+        color = HypeColors.ErrorDark,
+        style = MaterialTheme.typography.bodySmall,
+        modifier = modifier.semantics {
+            liveRegion = LiveRegionMode.Polite
+            errorSemantics(message)
+        },
+    )
 }
 
 @Composable
