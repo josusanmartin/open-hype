@@ -1,10 +1,15 @@
 package dev.josu.hypecar.feature.search
 
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.model.FeedItem
+import dev.josu.hypecar.core.model.FeedMode
 import dev.josu.hypecar.core.model.PlaybackQueue
+import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.SearchQuery
 import dev.josu.hypecar.core.model.SearchSort
 import dev.josu.hypecar.core.model.Track
+import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.repository.SearchRepository
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +41,7 @@ class SearchViewModelTest {
     @Test
     fun `query updates do not search before debounce window elapses`() = runTest {
         val search = RecordingSearchRepository(results = listOf(track("t1")))
-        val vm = SearchViewModel(search, NoOpPlaybackRepository)
+        val vm = SearchViewModel(search, NoOpPlaybackRepository, searchFavoriteSync())
 
         vm.updateQuery("hello")
         advanceTimeBy(100)
@@ -50,7 +55,7 @@ class SearchViewModelTest {
     @Test
     fun `rapid query changes only fire the last query after debounce`() = runTest {
         val search = RecordingSearchRepository(results = listOf(track("final")))
-        val vm = SearchViewModel(search, NoOpPlaybackRepository)
+        val vm = SearchViewModel(search, NoOpPlaybackRepository, searchFavoriteSync())
 
         vm.updateQuery("h")
         vm.updateQuery("he")
@@ -66,7 +71,7 @@ class SearchViewModelTest {
     @Test
     fun `clearing the query stops the search and empties results`() = runTest {
         val search = RecordingSearchRepository(results = listOf(track("first")))
-        val vm = SearchViewModel(search, NoOpPlaybackRepository)
+        val vm = SearchViewModel(search, NoOpPlaybackRepository, searchFavoriteSync())
 
         vm.updateQuery("hello")
         advanceUntilIdle()
@@ -79,9 +84,25 @@ class SearchViewModelTest {
     }
 
     @Test
+    fun `typing a different query clears stale results before debounce completes`() = runTest {
+        val search = RecordingSearchRepository(results = listOf(track("first")))
+        val vm = SearchViewModel(search, NoOpPlaybackRepository, searchFavoriteSync())
+
+        vm.updateQuery("first query")
+        advanceUntilIdle()
+        assertThat(vm.state.value.tracks.map { it.id }).containsExactly("first")
+
+        vm.updateQuery("second query")
+
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(vm.state.value.loading).isTrue()
+        assertThat(search.calls.last()).isEqualTo("first query" to SearchSort.NEWEST)
+    }
+
+    @Test
     fun `updateSort triggers immediate search with new sort when query is non-blank`() = runTest {
         val search = RecordingSearchRepository(results = listOf(track("a")))
-        val vm = SearchViewModel(search, NoOpPlaybackRepository)
+        val vm = SearchViewModel(search, NoOpPlaybackRepository, searchFavoriteSync())
 
         vm.updateQuery("hello")
         advanceUntilIdle()
@@ -92,6 +113,24 @@ class SearchViewModelTest {
 
         assertThat(search.calls.size).isEqualTo(initialCalls + 1)
         assertThat(search.calls.last()).isEqualTo("hello" to SearchSort.MOST_FAVORITES)
+    }
+
+    @Test
+    fun `failed sort switch does not retain results from the previous sort`() = runTest {
+        val search = RecordingSearchRepository(
+            results = listOf(track("newest")),
+            failingSort = SearchSort.MOST_FAVORITES,
+        )
+        val vm = SearchViewModel(search, NoOpPlaybackRepository, searchFavoriteSync())
+        vm.updateQuery("hello")
+        advanceUntilIdle()
+        assertThat(vm.state.value.tracks.map(Track::id)).containsExactly("newest")
+
+        vm.updateSort(SearchSort.MOST_FAVORITES)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Unknown)
     }
 
     private fun track(id: String) = Track(
@@ -111,10 +150,12 @@ class SearchViewModelTest {
 
 private class RecordingSearchRepository(
     private val results: List<Track>,
+    private val failingSort: SearchSort? = null,
 ) : SearchRepository {
     val calls = mutableListOf<Pair<String, SearchSort>>()
     override suspend fun searchTracks(query: SearchQuery, page: Int, count: Int): List<Track> {
         calls += query.value to query.sort
+        if (query.sort == failingSort) error("search unavailable")
         return results
     }
 }
@@ -130,4 +171,15 @@ private object NoOpPlaybackRepository : PlaybackRepository {
     override suspend fun toggleShuffle() = Unit
     override suspend fun cycleRepeatMode() = Unit
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
+}
+
+private fun searchFavoriteSync() = FavoriteSyncManager(SearchNoOpMe, NoOpPlaybackRepository)
+
+private object SearchNoOpMe : MeRepository {
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun toggleFavorite(trackId: String): Boolean? = null
+    override suspend fun playlistNames(): List<Playlist> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
+    override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }

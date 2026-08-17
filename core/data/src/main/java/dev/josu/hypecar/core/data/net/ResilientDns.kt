@@ -22,9 +22,15 @@ class ResilientDns(
     override fun lookup(hostname: String): List<InetAddress> = try {
         systemDns.lookup(hostname)
     } catch (original: UnknownHostException) {
+        if (!hostname.isApprovedHypeHost()) throw original
         fallbackProviders.firstNotNullOfOrNull { fallback ->
             runCatching { fallback.lookup(hostname) }.getOrNull()
         } ?: throw original
+    }
+
+    private fun String.isApprovedHypeHost(): Boolean {
+        val normalized = lowercase()
+        return normalized == "hypem.com" || normalized.endsWith(".hypem.com")
     }
 
     companion object {

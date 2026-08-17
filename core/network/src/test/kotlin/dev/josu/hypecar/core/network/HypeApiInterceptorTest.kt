@@ -9,6 +9,9 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class HypeApiInterceptorTest {
     @Test
@@ -85,6 +88,43 @@ class HypeApiInterceptorTest {
         assertThat(captured.url.queryParameter("hm_token")).isNull()
     }
 
+    @Test
+    fun `never injects an existing token into get_token`() {
+        val tokenProvider = TrackingTokenProvider("old-token")
+
+        val captured = captureRequest(
+            url = "https://api.hypem.com/v2/get_token",
+            tokenProvider = tokenProvider,
+        )
+
+        assertThat(captured.url.queryParameter("hm_token")).isNull()
+        assertThat(tokenProvider.initializationWaits).isEqualTo(0)
+    }
+
+    @Test
+    fun `waits for persisted token initialization before proceeding`() {
+        val tokenProvider = BlockingTokenProvider("persisted-token")
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val future = executor.submit<Request> {
+                captureRequest(
+                    url = "https://api.hypem.com/v2/me/favorites",
+                    tokenProvider = tokenProvider,
+                )
+            }
+            assertThat(tokenProvider.waitStarted.await(1, TimeUnit.SECONDS)).isTrue()
+            assertThat(future.isDone).isFalse()
+
+            tokenProvider.release.countDown()
+
+            assertThat(future.get(2, TimeUnit.SECONDS).url.queryParameter("hm_token"))
+                .isEqualTo("persisted-token")
+        } finally {
+            tokenProvider.release.countDown()
+            executor.shutdownNow()
+        }
+    }
+
     private fun captureRequest(
         url: String,
         tokenProvider: AuthTokenProvider,
@@ -101,6 +141,29 @@ class HypeApiInterceptorTest {
 }
 
 private class StaticTokenProvider(private val token: String?) : AuthTokenProvider {
+    override fun currentToken(): String? = token
+}
+
+private class TrackingTokenProvider(private val token: String?) : AuthTokenProvider {
+    var initializationWaits: Int = 0
+        private set
+
+    override fun awaitTokenInitialization() {
+        initializationWaits += 1
+    }
+
+    override fun currentToken(): String? = token
+}
+
+private class BlockingTokenProvider(private val token: String?) : AuthTokenProvider {
+    val waitStarted = CountDownLatch(1)
+    val release = CountDownLatch(1)
+
+    override fun awaitTokenInitialization() {
+        waitStarted.countDown()
+        release.await()
+    }
+
     override fun currentToken(): String? = token
 }
 

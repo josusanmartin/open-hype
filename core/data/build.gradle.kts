@@ -53,10 +53,10 @@ dependencies {
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp.core)
     implementation(libs.okhttp.doh)
-    implementation(libs.okhttp.logging)
     implementation(libs.hilt.android)
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.room.compiler)
+    ksp(libs.androidx.hilt.compiler)
     ksp(libs.hilt.compiler)
 
     testImplementation(libs.junit4)

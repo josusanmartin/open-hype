@@ -2,6 +2,10 @@ package dev.josu.hypecar.feature.auth
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -38,7 +42,9 @@ class LoginRouteScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("Sign in").assertIsDisplayed()
+        composeRule.onNodeWithText("Sign in")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit))
         composeRule.onNodeWithText("Username or email").assertIsDisplayed()
         composeRule.onNodeWithText("Password").assertIsDisplayed()
         composeRule.onNodeWithText("Log in").assertIsDisplayed()
@@ -116,7 +122,23 @@ class LoginRouteScreenTest {
         composeRule.waitUntil(timeoutMillis = 2_000) {
             viewModel.uiState.value.error != null
         }
-        composeRule.onNodeWithText("Username or password is incorrect.").assertIsDisplayed()
+        composeRule.onNodeWithText("Username or password is incorrect.")
+            .assertIsDisplayed()
+            .assert(
+                SemanticsMatcher.expectValue(
+                    SemanticsProperties.Error,
+                    "Username or password is incorrect.",
+                ),
+            )
+            .assert(
+                SemanticsMatcher.expectValue(
+                    SemanticsProperties.LiveRegion,
+                    LiveRegionMode.Polite,
+                ),
+            )
+
+        composeRule.onNodeWithText("Username or email").performTextInput("2")
+        composeRule.onNodeWithText("Username or password is incorrect.").assertDoesNotExist()
     }
 }
 

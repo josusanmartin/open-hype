@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.androidx.baselineprofile)
 }
 
 val releaseStoreFile =
@@ -119,6 +120,8 @@ dependencies {
     implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.androidx.hilt.work)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.profileinstaller)
     ksp(libs.hilt.compiler)
 
     implementation(platform(libs.androidx.compose.bom))
@@ -143,6 +146,16 @@ dependencies {
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
+
+    baselineProfile(project(":baselineprofile"))
+}
+
+// Generation is deliberately opt-in: normal local/CI builds consume the
+// checked-in profile and never require a connected or managed device.
+baselineProfile {
+    automaticGenerationDuringBuild = false
+    mergeIntoMain = true
+    saveInSrc = true
 }
 
 tasks.register("validateReleaseSigning") {

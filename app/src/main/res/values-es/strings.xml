@@ -44,7 +44,20 @@
     <string name="settings_used_of_quota">de %1$s</string>
     <plurals name="settings_downloaded_count">
         <item quantity="one">%1$d favorito guardado</item>
+        <item quantity="many">%1$d favoritos guardados</item>
         <item quantity="other">%1$d favoritos guardados</item>
     </plurals>
     <string name="settings_usage_summary">%1$s · %2$s</string>
+    <string name="settings_error_sync">No se pudieron actualizar las descargas sin conexión. Inténtalo de nuevo.</string>
+
+    <!-- Pantalla de configuración estacionada para Android Automotive OS. -->
+    <string name="car_setup_title">Open Hype</string>
+    <string name="car_setup_subtitle">Tu música, en la app multimedia del coche</string>
+    <string name="car_setup_body">Explora, busca y controla la reproducción desde la app multimedia del sistema. Esta pantalla queda reservada para configurar la cuenta y las descargas.</string>
+    <string name="car_setup_loading">Comprobando tu cuenta…</string>
+    <string name="car_setup_sign_in">Iniciar sesión</string>
+    <string name="car_setup_signed_in">Sesión iniciada como %1$s</string>
+    <string name="car_setup_sign_out">Cerrar sesión</string>
+    <string name="car_setup_settings">Ajustes sin conexión</string>
+    <string name="car_setup_parked">Cambia la configuración solo cuando estés estacionado.</string>
 </resources>

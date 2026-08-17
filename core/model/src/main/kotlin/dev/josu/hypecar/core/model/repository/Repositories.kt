@@ -123,6 +123,16 @@ interface OfflineRepository {
 
     suspend fun clearDownloads()
 
+    /**
+     * Removes every account-owned offline setting and file. Session cleanup
+     * uses this stronger operation; the user-facing clear action intentionally
+     * keeps their enabled/quota preferences.
+     */
+    suspend fun clearAccountData() {
+        setEnabled(false)
+        clearDownloads()
+    }
+
     fun cachedAudioUri(trackId: String): String?
 }
 

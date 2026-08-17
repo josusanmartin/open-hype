@@ -6,7 +6,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,13 +15,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -46,12 +46,12 @@ fun SkeletonBlock(
     height: Dp = 16.dp,
     cornerRadius: Dp = 6.dp,
 ) {
-    val alpha = pulsingAlpha()
-    Box(
-        modifier = modifier
-            .height(height)
-            .clip(RoundedCornerShape(cornerRadius))
-            .background(SkeletonBaseColor.copy(alpha = alpha)),
+    val pulse = rememberSkeletonPulse()
+    SkeletonBlockContent(
+        modifier = modifier,
+        height = height,
+        cornerRadius = cornerRadius,
+        alpha = { pulse.value },
     )
 }
 
@@ -64,34 +64,61 @@ fun SkeletonTrackRow(
     modifier: Modifier = Modifier,
     coverSize: Dp = 64.dp,
 ) {
+    val pulse = rememberSkeletonPulse()
     val loadingLabel = stringResource(R.string.skeleton_loading)
+    SkeletonTrackRowContent(
+        modifier = modifier,
+        coverSize = coverSize,
+        alpha = { pulse.value },
+        loadingLabel = loadingLabel,
+    )
+}
+
+@Composable
+private fun SkeletonTrackRowContent(
+    modifier: Modifier,
+    coverSize: Dp,
+    alpha: () -> Float,
+    loadingLabel: String?,
+) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 10.dp)
-            .semantics { contentDescription = loadingLabel },
+            .then(
+                if (loadingLabel != null) {
+                    Modifier.semantics { contentDescription = loadingLabel }
+                } else {
+                    Modifier.clearAndSetSemantics { }
+                },
+            ),
     ) {
         Box(
             modifier = Modifier
                 .size(coverSize)
-                .clip(RoundedCornerShape(8.dp))
-                .background(SkeletonBaseColor.copy(alpha = pulsingAlpha())),
+                .skeletonBackground(cornerRadius = 8.dp, alpha = alpha),
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.padding(top = 4.dp)) {
-            SkeletonBlock(
+            SkeletonBlockContent(
                 modifier = Modifier.width(180.dp),
                 height = 14.dp,
+                cornerRadius = 6.dp,
+                alpha = alpha,
             )
             Spacer(modifier = Modifier.height(8.dp))
-            SkeletonBlock(
+            SkeletonBlockContent(
                 modifier = Modifier.width(120.dp),
                 height = 12.dp,
+                cornerRadius = 6.dp,
+                alpha = alpha,
             )
             Spacer(modifier = Modifier.height(8.dp))
-            SkeletonBlock(
+            SkeletonBlockContent(
                 modifier = Modifier.width(80.dp),
                 height = 10.dp,
+                cornerRadius = 6.dp,
+                alpha = alpha,
             )
         }
     }
@@ -103,18 +130,29 @@ fun SkeletonTrackRow(
  */
 @Composable
 fun SkeletonTrackList(
-    count: Int = 6,
     modifier: Modifier = Modifier,
+    count: Int = 6,
 ) {
-    Column(modifier = modifier) {
-        repeat(count) { SkeletonTrackRow() }
+    val pulse = rememberSkeletonPulse()
+    val loadingLabel = stringResource(R.string.skeleton_loading)
+    Column(
+        modifier = modifier.semantics { contentDescription = loadingLabel },
+    ) {
+        repeat(count) {
+            SkeletonTrackRowContent(
+                modifier = Modifier,
+                coverSize = 64.dp,
+                alpha = { pulse.value },
+                loadingLabel = null,
+            )
+        }
     }
 }
 
 @Composable
-private fun pulsingAlpha(): Float {
+private fun rememberSkeletonPulse(): State<Float> {
     val transition = rememberInfiniteTransition(label = "skeletonPulse")
-    val animated by transition.animateFloat(
+    return transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.75f,
         animationSpec = infiniteRepeatable(
@@ -123,7 +161,34 @@ private fun pulsingAlpha(): Float {
         ),
         label = "skeletonAlpha",
     )
-    return animated
+}
+
+@Composable
+private fun SkeletonBlockContent(
+    modifier: Modifier,
+    height: Dp,
+    cornerRadius: Dp,
+    alpha: () -> Float,
+) {
+    Box(
+        modifier = modifier
+            .height(height)
+            .skeletonBackground(cornerRadius = cornerRadius, alpha = alpha),
+    )
+}
+
+private fun Modifier.skeletonBackground(
+    cornerRadius: Dp,
+    alpha: () -> Float,
+): Modifier = drawWithCache {
+    val radius = cornerRadius.toPx()
+    onDrawBehind {
+        drawRoundRect(
+            color = SkeletonBaseColor,
+            alpha = alpha(),
+            cornerRadius = CornerRadius(radius, radius),
+        )
+    }
 }
 
 private val SkeletonBaseColor = Color(0xFF6E5F58)

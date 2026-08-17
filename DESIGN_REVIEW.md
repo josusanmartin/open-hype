@@ -35,7 +35,7 @@ These are explicit strengths I want to make sure don't get refactored away.
 - **Single shared `ExoPlayer` + single `MediaLibrarySession`** between phone and car (`HypePlaybackManager.kt:36`, `HypeMediaLibraryService.kt:33-37`) — avoids the classic double-session race.
 - **`MediaLibraryPlaybackServiceStarter.kt:14-22`** correctly uses `startService` and lets Media3 own foreground promotion — comment is preserved for a reason.
 - **`OkHttpBitmapLoader` + `CacheBitmapLoader`** work around the AAOS_API_35 trust-store bug — exactly the kind of issue most apps don't notice until users do.
-- **`withInlineArtwork`** (`HypeMediaLibraryCallback.kt:264-274`) pre-embeds bytes for the about-to-play item so Now Playing renders even on a stripped trust store.
+- **`OkHttpBitmapLoader`** performs bounded, cancellable HTTPS artwork fetches for Media3; queue construction and playback resumption keep only the artwork URI so starting audio never waits for an image download.
 - **Source-page-aware queue resolution** (`HypeMediaLibraryCallback.kt:221-256`) — tap a track on page 3, re-fetch page 3, and play the queue as the user sees it. This is unusually thoughtful and worth keeping.
 - **Favorite custom action requests a secondary action slot with overflow fallback** so it doesn't push skip-next off the car transport bar while still surfacing the heart on supported head units (`HypeMediaLibraryCallback.kt:53-79`).
 - **`setHandleAudioBecomingNoisy(true)` + audio attributes** set correctly for Bluetooth/AVRCP (`HypePlaybackManager.kt:97-101`).
@@ -164,7 +164,7 @@ The browse and Now Playing custom-layout slots can carry more. Candidates: "Skip
 `HypeMediaLibraryCallback.kt:207` (`loadChildrenSuspend`) collapses any exception to `emptyList()`. New accounts with 0 favorites see an empty section — no friendly empty-state row. Return a single non-playable item like "No favorites yet — open Hype on your phone to start" with `MEDIA_TYPE_FOLDER_MIXED` and `isPlayable=false`.
 
 **A11. The signed-out and custom-command code paths are untested.**
-`HypeMediaLibraryCallbackMetadataTest` covers 17 reflection-driven scenarios but does NOT exercise: the `requireSession` signed-out branch, the `signInPromptItem` content, `onCustomCommand` Favorite toggle (optimistic flip, rollback, `ERROR_INVALID_STATE`), `onConnect` custom-layout assembly, the `withInlineArtwork` OkHttp fetch, or the player listener on track transitions. These are exactly the paths that fail in the wild when shipped.
+The Auto callback suites now cover signed-out placeholders, metadata, controller admission, spoofed account-mutation identity, authoritative stream resolution, paged search, and bounded/cancellable artwork fetching. The remaining high-value gaps are the asynchronous Favorite toggle rollback and the player listener during real track transitions.
 
 **A12. `HypeMediaIdsTest` is missing parser edge cases.**
 URL-encoded reserved characters (`&`, `=`, `?`, `%`, unicode), malformed input, `parsePlaylistId` (implemented but uncovered), and `parseTrackSourcePage` with negative-value clamping. Easy add and these IDs are the contract between car and phone.
@@ -230,7 +230,6 @@ One observable Flow<Connectivity> consumed by a top-of-screen banner. Phone Top 
 - Callback / browse tree: `auto/src/main/java/dev/josu/hypecar/auto/service/HypeMediaLibraryCallback.kt`
 - Service: `auto/src/main/java/dev/josu/hypecar/auto/service/HypeMediaLibraryService.kt`
 - Service starter: `app/src/main/java/dev/josu/hypecar/MediaLibraryPlaybackServiceStarter.kt`
-- Notification policy: `app/src/main/java/dev/josu/hypecar/MediaNotificationPermissionPolicy.kt`
 - Playback engine: `core/playback/.../HypePlaybackManager.kt`
 - Bitmap loader: `auto/src/main/java/dev/josu/hypecar/auto/service/OkHttpBitmapLoader.kt`
 - Manifest entries: `app/src/main/AndroidManifest.xml`, `app/src/main/res/xml/automotive_app_desc.xml`

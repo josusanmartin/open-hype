@@ -10,6 +10,6 @@ interface HistoryDao {
     @Upsert
     suspend fun upsert(item: HistoryEntity)
 
-    @Query("SELECT * FROM play_history ORDER BY playedAtEpochSeconds DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM play_history ORDER BY playedAtEpochSeconds DESC, trackId ASC LIMIT :limit OFFSET :offset")
     suspend fun recent(limit: Int, offset: Int = 0): List<HistoryEntity>
 }

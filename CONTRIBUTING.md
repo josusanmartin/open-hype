@@ -27,7 +27,7 @@ For Android Auto / AAOS development, run the dev proxy in a second terminal:
 python3 scripts/hypem_api_proxy.py
 ```
 
-It listens on `:8787` and forwards to `https://api.hypem.com`. The debug build of the app routes through it automatically when running in an automotive emulator (`BuildConfig.ENABLE_AAOS_DEV_PROXY` is true in debug only).
+It listens only on `127.0.0.1:8787` and forwards to `https://api.hypem.com`. The debug build of the app routes through it automatically when running in an automotive emulator (`BuildConfig.ENABLE_AAOS_DEV_PROXY` is true in debug only).
 
 ## Project layout
 

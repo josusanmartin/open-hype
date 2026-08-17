@@ -61,6 +61,25 @@ class PopularViewModelTest {
     }
 
     @Test
+    fun `failed mode switch clears rows owned by the previous mode`() = runTest {
+        val catalog = ScriptedPopularCatalog(
+            popularByMode = mapOf(
+                PopularMode.NOW to Result.success(listOf(track("old-mode"))),
+                PopularMode.LAST_WEEK to Result.failure(IOException("offline")),
+            ),
+        )
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
+        advanceUntilIdle()
+        assertThat(vm.state.value.tracks.map(Track::id)).containsExactly("old-mode")
+
+        vm.selectMode(PopularMode.LAST_WEEK.ordinal)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.tracks).isEmpty()
+        assertThat(vm.state.value.error).isEqualTo(dev.josu.hypecar.core.model.UiErrorKind.Network)
+    }
+
+    @Test
     fun `selectMode is a no-op for the same index`() = runTest {
         val catalog = ScriptedPopularCatalog(popular = listOf(track("a")))
         val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
@@ -123,6 +142,26 @@ class PopularViewModelTest {
         assertThat(vm.state.value.tracks).hasSize(30)
     }
 
+    @Test
+    fun `loadMore de-duplicates a track repeated across moving popular pages`() = runTest {
+        val page1 = (1..30).map { track("track-$it") }
+        val page2 = listOf(track("track-30").copy(title = "fresh overlap")) +
+            (31..59).map { track("track-$it") }
+        val catalog = ScriptedPopularCatalog(
+            popularPages = mapOf(1 to Result.success(page1), 2 to Result.success(page2)),
+        )
+        val vm = PopularViewModel(catalog, NoOpPlayback, popularFavoriteSync())
+        advanceUntilIdle()
+
+        vm.loadMore()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.tracks).hasSize(59)
+        assertThat(vm.state.value.tracks.map(Track::id).toSet()).hasSize(59)
+        assertThat(vm.state.value.tracks.first { it.id == "track-30" }.title)
+            .isEqualTo("fresh overlap")
+    }
+
     private fun track(id: String) = Track(
         id = id, artist = "x", title = "y", lovedCount = 0,
         postedBy = "z", postedById = 0, postedCount = 0,
@@ -135,6 +174,7 @@ private class ScriptedPopularCatalog(
     private val popular: List<Track> = emptyList(),
     private val popularError: Throwable? = null,
     private val popularPages: Map<Int, Result<List<Track>>>? = null,
+    private val popularByMode: Map<PopularMode, Result<List<Track>>> = emptyMap(),
 ) : CatalogRepository {
     val popularCalls = mutableListOf<PopularMode>()
     val popularPageCalls = mutableListOf<Int>()
@@ -142,6 +182,7 @@ private class ScriptedPopularCatalog(
     override suspend fun popular(mode: PopularMode, page: Int, count: Int, forceRefresh: Boolean): List<Track> {
         popularCalls += mode
         popularPageCalls += page
+        popularByMode[mode]?.let { return it.getOrThrow() }
         popularPages?.get(page)?.let { return it.getOrThrow() }
         popularError?.let { throw it }
         return popular

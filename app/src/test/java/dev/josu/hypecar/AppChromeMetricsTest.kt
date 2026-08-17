@@ -13,10 +13,7 @@ class AppChromeMetricsTest {
         assertThat(metrics.miniPlayerArtSize.value).isAtMost(38f)
         assertThat(metrics.miniPlayerRowVerticalPadding.value).isAtMost(5f)
         assertThat(metrics.miniPlayerBottomSpacer.value).isAtMost(4f)
-        // Bumped from 40dp → 44dp (smallest size still passing M3
-        // minimumInteractiveSize). Locked at exactly 44 because anything
-        // larger forces bottomNavHeight up and squeezes catalog content.
-        assertThat(metrics.miniPlayerIconButtonSize.value).isEqualTo(44f)
+        assertThat(metrics.miniPlayerIconButtonSize.value).isAtLeast(48f)
     }
 
     @Test

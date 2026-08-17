@@ -24,5 +24,5 @@
     <string name="player_error_favorite">Couldn\'t update favorite. Check your connection.</string>
     <string name="player_error_dismiss">Dismiss</string>
     <string name="player_up_next">Up next</string>
-    <string name="player_track_in_queue_a11y">%1$s by %2$s. Tap to play.</string>
+    <string name="player_track_in_queue_a11y">%1$s by %2$s. Queue position %3$d. Tap to play.</string>
 </resources>

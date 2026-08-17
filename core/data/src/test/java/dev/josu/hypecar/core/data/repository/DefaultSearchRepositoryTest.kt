@@ -55,6 +55,26 @@ class DefaultSearchRepositoryTest {
         assertThat(second.map { it.id }).containsExactly("a")
         assertThat(api.callCount).isEqualTo(1)
     }
+
+    @Test
+    fun `search bypasses retained account cache while signed out`() = runBlocking {
+        val api = StubSearchApi(
+            pages = listOf(
+                listOf(sampleTrackDto("account-a", isLoved = true)),
+                listOf(sampleTrackDto("signed-out")),
+            ),
+        )
+        val gate = AccountDataWriteGate(initiallyActive = true)
+        val repo = DefaultSearchRepository(api, FakeTrackDao(), FakeTrackListDao(), Json, gate)
+        val query = SearchQuery("waves", SearchSort.NEWEST)
+        repo.searchTracks(query, page = 1, count = 30)
+
+        gate.deactivate()
+        val signedOut = repo.searchTracks(query, page = 1, count = 30)
+
+        assertThat(signedOut.map { it.id }).containsExactly("signed-out")
+        assertThat(api.callCount).isEqualTo(2)
+    }
 }
 
 private class StubSearchApi(

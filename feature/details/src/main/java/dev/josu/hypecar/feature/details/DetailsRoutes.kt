@@ -36,6 +36,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.josu.hypecar.core.data.repository.AccountDataWriteGate
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.Blog
 import dev.josu.hypecar.core.model.Track
@@ -44,11 +46,13 @@ import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.model.runSuspendCatchingPreservingCancellation
+import dev.josu.hypecar.core.model.withoutPersonalFavoriteState
 import dev.josu.hypecar.core.ui.hypeTokens
 import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.catalog.EditorialHeroHeader
 import dev.josu.hypecar.feature.catalog.TrackListBody
 import dev.josu.hypecar.feature.catalog.rememberIsAutomotiveUi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -74,28 +78,61 @@ class BlogDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val catalogRepository: CatalogRepository,
     private val playbackRepository: PlaybackRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
+    private val accountDataWriteGate: AccountDataWriteGate = AccountDataWriteGate(),
 ) : ViewModel() {
     private val blogId: Int = checkNotNull(savedStateHandle["blogId"])
     private val _state = MutableStateFlow(BlogDetailUiState())
     val state: StateFlow<BlogDetailUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
+    private var observedAccountGeneration = accountDataWriteGate.accountBoundary.value.generation
 
     init {
         load()
+        viewModelScope.launch {
+            favoriteSyncManager.edits.collect { edit ->
+                _state.value = _state.value.copy(
+                    tracks = favoriteSyncManager.applyTo(_state.value.tracks, edit),
+                )
+            }
+        }
+        viewModelScope.launch {
+            accountDataWriteGate.accountBoundary.collect { boundary ->
+                if (boundary.generation == observedAccountGeneration) return@collect
+                observedAccountGeneration = boundary.generation
+                loadJob?.cancel()
+                _state.value = _state.value.copy(
+                    tracks = _state.value.tracks.withoutPersonalFavoriteState(),
+                    loading = false,
+                    error = null,
+                )
+                load()
+            }
+        }
     }
 
     /** A transient failure on open must not leave a dead screen. */
     fun retry() = load()
 
     private fun load() {
+        loadJob?.cancel()
         _state.value = BlogDetailUiState()
-        viewModelScope.launch {
-            _state.value = runSuspendCatchingPreservingCancellation {
+        val accountGeneration = accountDataWriteGate.accountBoundary.value.generation
+        loadJob = viewModelScope.launch {
+            val favoriteRead = favoriteSyncManager.captureFavoriteRead()
+            val result = runSuspendCatchingPreservingCancellation {
                 BlogDetailUiState(
                     blog = catalogRepository.blog(blogId),
-                    tracks = catalogRepository.blogTracks(blogId, count = 30),
+                    tracks = favoriteSyncManager.applyToFetched(
+                        catalogRepository.blogTracks(blogId, count = 30),
+                        favoriteRead,
+                    ),
                     loading = false,
                 )
             }.getOrElse { BlogDetailUiState(loading = false, error = it.toUiErrorKind()) }
+            if (accountDataWriteGate.accountBoundary.value.generation == accountGeneration) {
+                _state.value = result
+            }
         }
     }
 
@@ -109,27 +146,60 @@ class UserDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val catalogRepository: CatalogRepository,
     private val playbackRepository: PlaybackRepository,
+    private val favoriteSyncManager: FavoriteSyncManager,
+    private val accountDataWriteGate: AccountDataWriteGate = AccountDataWriteGate(),
 ) : ViewModel() {
     private val username: String = checkNotNull(savedStateHandle["username"])
     private val _state = MutableStateFlow(UserDetailUiState())
     val state: StateFlow<UserDetailUiState> = _state.asStateFlow()
+    private var loadJob: Job? = null
+    private var observedAccountGeneration = accountDataWriteGate.accountBoundary.value.generation
 
     init {
         load()
+        viewModelScope.launch {
+            favoriteSyncManager.edits.collect { edit ->
+                _state.value = _state.value.copy(
+                    tracks = favoriteSyncManager.applyTo(_state.value.tracks, edit),
+                )
+            }
+        }
+        viewModelScope.launch {
+            accountDataWriteGate.accountBoundary.collect { boundary ->
+                if (boundary.generation == observedAccountGeneration) return@collect
+                observedAccountGeneration = boundary.generation
+                loadJob?.cancel()
+                _state.value = _state.value.copy(
+                    tracks = _state.value.tracks.withoutPersonalFavoriteState(),
+                    loading = false,
+                    error = null,
+                )
+                load()
+            }
+        }
     }
 
     fun retry() = load()
 
     private fun load() {
+        loadJob?.cancel()
         _state.value = UserDetailUiState()
-        viewModelScope.launch {
-            _state.value = runSuspendCatchingPreservingCancellation {
+        val accountGeneration = accountDataWriteGate.accountBoundary.value.generation
+        loadJob = viewModelScope.launch {
+            val favoriteRead = favoriteSyncManager.captureFavoriteRead()
+            val result = runSuspendCatchingPreservingCancellation {
                 UserDetailUiState(
                     user = catalogRepository.user(username),
-                    tracks = catalogRepository.userFavorites(username, count = 30),
+                    tracks = favoriteSyncManager.applyToFetched(
+                        catalogRepository.userFavorites(username, count = 30),
+                        favoriteRead,
+                    ),
                     loading = false,
                 )
             }.getOrElse { UserDetailUiState(loading = false, error = it.toUiErrorKind()) }
+            if (accountDataWriteGate.accountBoundary.value.generation == accountGeneration) {
+                _state.value = result
+            }
         }
     }
 
@@ -278,7 +348,7 @@ fun UserDetailRoute(
                                     .asPaddingValues()
                                     .calculateTopPadding() + 4.dp,
                             )
-                            .size(44.dp)
+                            .size(48.dp)
                             .pressFeedback(pressedScale = 0.90f, label = "detailBackPress"),
                     ) {
                         androidx.compose.material3.Icon(
@@ -374,7 +444,7 @@ private fun EditorialDetailFeed(
                                     .asPaddingValues()
                                     .calculateTopPadding() + 4.dp,
                             )
-                            .size(44.dp)
+                            .size(48.dp)
                             .pressFeedback(pressedScale = 0.90f, label = "detailBackPress"),
                     ) {
                         androidx.compose.material3.Icon(

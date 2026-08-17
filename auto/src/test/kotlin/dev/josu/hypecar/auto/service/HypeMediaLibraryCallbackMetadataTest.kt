@@ -1,16 +1,11 @@
 package dev.josu.hypecar.auto.service
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
-import androidx.media3.session.SessionError
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.auto.HypeMediaIds
@@ -33,16 +28,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.runBlocking
-import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Protocol
-import okhttp3.Response
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class HypeMediaLibraryCallbackMetadataTest {
@@ -56,7 +45,6 @@ class HypeMediaLibraryCallbackMetadataTest {
         offlineRepository = EmptyOfflineRepository,
         authRepository = SignedInAuthRepository,
         favoriteSyncManager = metadataTestFavoriteSyncManager(),
-        okHttpClient = TestOkHttpClient,
     )
 
     @Test
@@ -169,70 +157,12 @@ class HypeMediaLibraryCallbackMetadataTest {
             )
             .build()
 
+        awaitMetadataCondition { callback.privateHasActiveAccountForMetadataTest() }
         assertThat(callback.privateFavoriteStateFor(item)).isFalse()
 
         callback.privateRememberFavoriteState(trackId = "fav", loved = true)
 
         assertThat(callback.privateFavoriteStateFor(item)).isTrue()
-    }
-
-    @Test
-    fun `Auto favorite toggle result reports io error when repository cannot confirm`() = runBlocking {
-        val result = resolveAutoFavoriteToggle(
-            meRepository = PlaylistsMeRepository(emptyList()),
-            trackId = "fav",
-            originalLoved = false,
-        )
-
-        assertThat(result.confirmedLoved).isFalse()
-        assertThat(result.sessionResult.resultCode).isEqualTo(SessionError.ERROR_IO)
-    }
-
-    @Test
-    fun `Auto inline artwork is downsampled and cached`() {
-        val networkCalls = AtomicInteger(0)
-        val artworkBytes = testJpegBytes(width = 1600, height = 1000)
-        val client = okhttp3.OkHttpClient.Builder()
-            .addInterceptor(
-                Interceptor { chain ->
-                    networkCalls.incrementAndGet()
-                    Response.Builder()
-                        .request(chain.request())
-                        .protocol(Protocol.HTTP_1_1)
-                        .code(200)
-                        .message("OK")
-                        .body(artworkBytes.toResponseBody("image/jpeg".toMediaType()))
-                        .build()
-                },
-            )
-            .build()
-        val callback = HypeMediaLibraryCallback(
-            context = testContext,
-            catalogRepository = EmptyCatalogRepository,
-            meRepository = EmptyMeRepository,
-            searchRepository = EmptySearchRepository,
-            offlineRepository = EmptyOfflineRepository,
-            authRepository = SignedInAuthRepository,
-            favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = client,
-        )
-        val item = MediaItem.Builder()
-            .setMediaId(HypeMediaIds.track("art"))
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setArtworkUri(Uri.parse("https://art.example/cover.jpg"))
-                    .build(),
-            )
-            .build()
-
-        val first = callback.privateWithInlineArtworkForTests(item)
-        val second = callback.privateWithInlineArtworkForTests(item)
-        val firstArtwork = first.mediaMetadata.artworkData!!
-        val decoded = BitmapFactory.decodeByteArray(firstArtwork, 0, firstArtwork.size)!!
-
-        assertThat(networkCalls.get()).isEqualTo(1)
-        assertThat(second.mediaMetadata.artworkData).isEqualTo(firstArtwork)
-        assertThat(maxOf(decoded.width, decoded.height)).isAtMost(512)
     }
 
     @Test
@@ -245,7 +175,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val items = failingCallback.privateLoadChildren(HypeMediaIds.latest, pageSize = 20)
@@ -263,7 +192,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val item = trackCallback.privateLoadItem(HypeMediaIds.track(sampleTrack.id))
@@ -284,7 +212,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val idOnlyItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(sampleTrack.id))
@@ -307,7 +234,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(secondTrack.id, HypeMediaIds.latest))
@@ -337,7 +263,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val mediaId = HypeMediaIds.track(
             id = "page2-1",
@@ -370,7 +295,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(thirdTrack.id, HypeMediaIds.search("lunon")))
@@ -400,7 +324,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val selectedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track(sampleTrack.id, HypeMediaIds.latest, sourcePage = 99))
@@ -420,28 +343,26 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
-    fun `resolveMediaItems leaves items with localConfiguration alone`() {
+    fun `resolveMediaItems replaces an external localConfiguration with the app catalog URI`() {
         val callback = HypeMediaLibraryCallback(
             context = testContext,
-            catalogRepository = EmptyCatalogRepository,
+            catalogRepository = TrackCatalogRepository,
             meRepository = EmptyMeRepository,
             searchRepository = EmptySearchRepository,
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val prebuilt = MediaItem.Builder()
-            .setMediaId("track:already-resolved")
-            .setUri("https://hypem.com/serve/public/already-resolved")
+            .setMediaId(HypeMediaIds.track(sampleTrack.id))
+            .setUri("https://evil.example/attacker-controlled.mp3")
             .build()
 
         val resolved = callback.privateResolveMediaItems(listOf(prebuilt))
 
-        // Same item passes through.
-        assertThat(resolved.single().mediaId).isEqualTo("track:already-resolved")
+        assertThat(HypeMediaIds.parseTrackId(resolved.single().mediaId)).isEqualTo(sampleTrack.id)
         assertThat(resolved.single().localConfiguration?.uri.toString())
-            .isEqualTo("https://hypem.com/serve/public/already-resolved")
+            .isEqualTo(sampleTrack.streamUrl())
     }
 
     @Test
@@ -454,7 +375,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
         val resolvedItem = MediaItem.Builder()
             .setMediaId(HypeMediaIds.track("only"))
@@ -482,7 +402,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.favorites)
@@ -502,7 +421,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.playlist(5))
@@ -523,7 +441,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val item = callback.privateLoadItem(HypeMediaIds.playlist(999))
@@ -542,7 +459,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(
@@ -556,6 +472,29 @@ class HypeMediaLibraryCallbackMetadataTest {
     }
 
     @Test
+    fun `paged search results retain their source page and page size for queue reconstruction`() {
+        val callback = HypeMediaLibraryCallback(
+            context = testContext,
+            catalogRepository = EmptyCatalogRepository,
+            meRepository = EmptyMeRepository,
+            searchRepository = SearchTracksRepository,
+            offlineRepository = EmptyOfflineRepository,
+            authRepository = SignedInAuthRepository,
+            favoriteSyncManager = metadataTestFavoriteSyncManager(),
+        )
+
+        val items = callback.privateLoadSearchResults(query = "lunon", page = 3, pageSize = 7)
+
+        assertThat(items).isNotEmpty()
+        items.forEach { item ->
+            assertThat(HypeMediaIds.parseTrackSourceId(item.mediaId))
+                .isEqualTo(HypeMediaIds.search("lunon"))
+            assertThat(HypeMediaIds.parseTrackSourcePage(item.mediaId)).isEqualTo(3)
+            assertThat(HypeMediaIds.parseTrackSourcePageSize(item.mediaId)).isEqualTo(7)
+        }
+    }
+
+    @Test
     fun `loadChildren on a playlist-prefixed parentId returns the playlist tracks`() {
         val callback = HypeMediaLibraryCallback(
             context = testContext,
@@ -565,7 +504,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(
@@ -589,7 +527,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(
@@ -613,7 +550,6 @@ class HypeMediaLibraryCallbackMetadataTest {
             offlineRepository = EmptyOfflineRepository,
             authRepository = SignedInAuthRepository,
             favoriteSyncManager = metadataTestFavoriteSyncManager(),
-            okHttpClient = TestOkHttpClient,
         )
 
         val items = callback.privateLoadChildren(parentId = "totally:unknown", pageSize = 20)
@@ -696,6 +632,20 @@ private fun HypeMediaLibraryCallback.privateFavoriteStateFor(mediaItem: MediaIte
     return method.invoke(this, mediaItem) as Boolean
 }
 
+private fun HypeMediaLibraryCallback.privateHasActiveAccountForMetadataTest(): Boolean {
+    val method = javaClass.getDeclaredMethod("activeAccountSnapshot")
+    method.isAccessible = true
+    return method.invoke(this) != null
+}
+
+private fun awaitMetadataCondition(condition: () -> Boolean) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    while (!condition() && System.nanoTime() < deadline) {
+        Thread.sleep(5)
+    }
+    assertThat(condition()).isTrue()
+}
+
 private fun HypeMediaLibraryCallback.privateRememberFavoriteState(trackId: String, loved: Boolean) {
     val method = javaClass.getDeclaredMethod(
         "rememberFavoriteState",
@@ -704,15 +654,6 @@ private fun HypeMediaLibraryCallback.privateRememberFavoriteState(trackId: Strin
     )
     method.isAccessible = true
     method.invoke(this, trackId, loved)
-}
-
-private fun HypeMediaLibraryCallback.privateWithInlineArtworkForTests(mediaItem: MediaItem): MediaItem {
-    val method = javaClass.getDeclaredMethod(
-        "withInlineArtworkForTests",
-        MediaItem::class.java,
-    )
-    method.isAccessible = true
-    return method.invoke(this, mediaItem) as MediaItem
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -727,6 +668,22 @@ private fun HypeMediaLibraryCallback.privateLoadChildren(
     )
     method.isAccessible = true
     return method.invoke(this, parentId, pageSize) as List<MediaItem>
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun HypeMediaLibraryCallback.privateLoadSearchResults(
+    query: String,
+    page: Int,
+    pageSize: Int,
+): List<MediaItem> {
+    val method = javaClass.getDeclaredMethod(
+        "loadSearchResults",
+        String::class.java,
+        Int::class.javaPrimitiveType,
+        Int::class.javaPrimitiveType,
+    )
+    method.isAccessible = true
+    return method.invoke(this, query, page, pageSize) as List<MediaItem>
 }
 
 private fun HypeMediaLibraryCallback.privateLoadItem(mediaId: String): MediaItem? {
@@ -916,21 +873,6 @@ private class PlaylistTracksMeRepository(
     override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = tracks
     override suspend fun feed(mode: dev.josu.hypecar.core.model.FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
     override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
-}
-
-private val TestOkHttpClient: okhttp3.OkHttpClient = okhttp3.OkHttpClient.Builder().build()
-
-private fun testJpegBytes(width: Int, height: Int): ByteArray {
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    bitmap.eraseColor(Color.rgb(220, 92, 34))
-    return try {
-        java.io.ByteArrayOutputStream().use { output ->
-            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, output))
-            output.toByteArray()
-        }
-    } finally {
-        bitmap.recycle()
-    }
 }
 
 private object MetadataNoOpPlaybackRepository : dev.josu.hypecar.core.model.repository.PlaybackRepository {

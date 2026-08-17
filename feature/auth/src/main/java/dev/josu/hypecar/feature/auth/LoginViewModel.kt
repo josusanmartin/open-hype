@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.josu.hypecar.core.data.toUiErrorKind
 import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.model.repository.AuthRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,13 +24,15 @@ class LoginViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
+    private var loginJob: Job? = null
 
     fun login(
         usernameOrEmail: String,
         password: String,
         onSuccess: () -> Unit,
     ) {
-        viewModelScope.launch {
+        if (loginJob?.isActive == true) return
+        loginJob = viewModelScope.launch {
             _uiState.value = LoginUiState(isLoading = true)
             val result = authRepository.login(usernameOrEmail, password)
             _uiState.value = if (result.isSuccess) {

@@ -25,5 +25,5 @@
     <string name="player_error_dismiss">Descartar</string>
 
     <string name="player_up_next">A continuación</string>
-    <string name="player_track_in_queue_a11y">%1$s de %2$s. Tocar para reproducir.</string>
+    <string name="player_track_in_queue_a11y">%1$s de %2$s. Posición %3$d en la cola. Tocar para reproducir.</string>
 </resources>

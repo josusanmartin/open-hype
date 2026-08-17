@@ -40,7 +40,8 @@ class RepositoryCancellationTest {
 }
 
 private object CancellingFavoriteApi : CancellationEmptyHypeApiService() {
-    override suspend fun toggleFavorite(value: String, type: String): ResponseBody = throw CancellationException("test cancellation")
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody =
+        throw CancellationException("test cancellation")
 }
 
 private object CancellationEmptyTrackDao : TrackDao {
@@ -69,14 +70,15 @@ private object CancellationEmptyHistoryDao : HistoryDao {
 private abstract class CancellationEmptyHypeApiService : HypeApiService {
     override suspend fun getToken(username: String, password: String, deviceId: String): GetTokenResponseDto = error("Not used")
     override suspend fun tracks(params: Map<String, String>): List<TrackDto> = emptyList()
-    override suspend fun track(trackId: String): TrackDto = error("Not used")
+    override suspend fun track(trackId: String, authToken: String?): TrackDto = error("Not used")
     override suspend fun popular(params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun favorites(params: Map<String, String>): List<TrackDto> = emptyList()
-    override suspend fun toggleFavorite(value: String, type: String): ResponseBody = "0".toResponseBody()
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody =
+        "0".toResponseBody()
     override suspend fun playlistNames(): List<String> = emptyList()
     override suspend fun playlist(playlistId: Int, params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun feed(params: Map<String, String>): List<TrackDto> = emptyList()
-    override suspend fun postHistory(type: String, itemId: String, position: Int): ResponseBody = "0".toResponseBody()
+    override suspend fun postHistory(type: String, itemId: String, position: Int, authToken: String?): ResponseBody = "0".toResponseBody()
     override suspend fun blogs(params: Map<String, String>): List<BlogDto> = emptyList()
     override suspend fun blog(blogId: Int): BlogDto = error("Not used")
     override suspend fun blogTracks(blogId: Int, params: Map<String, String>): List<TrackDto> = emptyList()

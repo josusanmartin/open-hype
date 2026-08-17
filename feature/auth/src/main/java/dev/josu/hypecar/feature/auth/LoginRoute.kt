@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,7 +43,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -51,8 +57,10 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.josu.hypecar.core.model.UiErrorKind
+import dev.josu.hypecar.core.ui.HypeColors
 import dev.josu.hypecar.core.ui.errorLabel
 import dev.josu.hypecar.core.ui.pressFeedback
+import androidx.compose.ui.semantics.error as errorSemantics
 
 @Composable
 fun LoginRoute(
@@ -94,6 +102,7 @@ fun LoginRoute(
                 text = stringResource(R.string.auth_screen_title),
                 color = Color(0xFF101010),
                 style = MaterialTheme.typography.displayLarge,
+                modifier = Modifier.semantics { heading() },
             )
             Text(
                 text = stringResource(R.string.auth_screen_blurb),
@@ -106,11 +115,18 @@ fun LoginRoute(
             )
             OutlinedTextField(
                 value = username,
-                onValueChange = { username = it },
+                onValueChange = {
+                    username = it
+                    viewModel.dismissError()
+                },
                 label = { Text(stringResource(R.string.auth_field_username)) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .loginAutofill(LoginAutofillField.Username) { username = it },
+                    .loginAutofill(LoginAutofillField.Username) {
+                        username = it
+                        viewModel.dismissError()
+                    },
+                isError = state.error != null,
                 singleLine = true,
                 keyboardOptions = LoginAutofillField.Username.keyboardOptions,
                 keyboardActions = KeyboardActions(
@@ -121,12 +137,19 @@ fun LoginRoute(
             )
             OutlinedTextField(
                 value = password,
-                onValueChange = { password = it },
+                onValueChange = {
+                    password = it
+                    viewModel.dismissError()
+                },
                 label = { Text(stringResource(R.string.auth_field_password)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(passwordFocusRequester)
-                    .loginAutofill(LoginAutofillField.Password) { password = it },
+                    .loginAutofill(LoginAutofillField.Password) {
+                        password = it
+                        viewModel.dismissError()
+                    },
+                isError = state.error != null,
                 singleLine = true,
                 keyboardOptions = LoginAutofillField.Password.keyboardOptions
                     .copy(imeAction = ImeAction.Go),
@@ -136,30 +159,43 @@ fun LoginRoute(
                 ),
                 visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
-                    Text(
-                        text = stringResource(
-                            if (showPassword) R.string.auth_password_hide else R.string.auth_password_show,
-                        ),
-                        color = Color(0xFFD55A20),
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier
-                            .pressFeedback(pressedScale = 0.94f, label = "passwordVisibilityPress")
-                            .clickable { showPassword = !showPassword }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    val visibilityLabel = stringResource(
+                        if (showPassword) R.string.auth_password_hide else R.string.auth_password_show,
                     )
+                    Box(
+                        modifier = Modifier
+                            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                            .pressFeedback(pressedScale = 0.94f, label = "passwordVisibilityPress")
+                            .clickable(role = Role.Button) { showPassword = !showPassword }
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = visibilityLabel,
+                            color = HypeColors.BrandOrangeDeep,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
                 },
                 shape = RoundedCornerShape(14.dp),
                 colors = loginTextFieldColors(),
             )
             state.error?.let { kind ->
+                val errorMessage = when (kind) {
+                    UiErrorKind.InvalidCredentials -> stringResource(R.string.auth_error_invalid_credentials)
+                    UiErrorKind.Unknown -> stringResource(R.string.auth_error_generic)
+                    else -> kind.errorLabel()
+                }
                 Text(
-                    text = when (kind) {
-                        UiErrorKind.InvalidCredentials -> stringResource(R.string.auth_error_invalid_credentials)
-                        UiErrorKind.Unknown -> stringResource(R.string.auth_error_generic)
-                        else -> kind.errorLabel()
-                    },
-                    color = Color(0xFFB3261E),
+                    text = errorMessage,
+                    // This screen always uses a cream canvas, independent of
+                    // system theme, so use the light-surface error role.
+                    color = Color(0xFFA83432),
                     style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.semantics {
+                        liveRegion = LiveRegionMode.Polite
+                        errorSemantics(errorMessage)
+                    },
                 )
             }
             Button(
@@ -173,7 +209,7 @@ fun LoginRoute(
                 shape = RoundedCornerShape(999.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFFFF6A21),
-                    contentColor = Color.White,
+                    contentColor = Color(0xFF19110E),
                     disabledContainerColor = Color(0xFFFFC7A8),
                     disabledContentColor = Color(0xFFFFF8F2),
                 ),
@@ -181,7 +217,7 @@ fun LoginRoute(
                 if (state.isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
-                        color = Color.White,
+                        color = Color(0xFF19110E),
                         strokeWidth = 2.dp,
                     )
                 } else {
@@ -209,7 +245,7 @@ private fun LoginWaveformMark() {
                 modifier = Modifier
                     .size(width = 5.dp, height = barHeight)
                     .clip(RoundedCornerShape(999.dp))
-                    .background(Color(0xFFD55A20)),
+                    .background(HypeColors.BrandOrangeDeep),
             )
         }
     }
@@ -222,11 +258,15 @@ private fun loginTextFieldColors() =
         unfocusedTextColor = Color(0xFF15100E),
         focusedContainerColor = Color(0x00FFFFFF),
         unfocusedContainerColor = Color(0x00FFFFFF),
-        focusedBorderColor = Color(0xFFD55A20),
+        focusedBorderColor = HypeColors.BrandOrangeDeep,
         unfocusedBorderColor = Color(0xFF5F5A56),
-        focusedLabelColor = Color(0xFFD55A20),
+        focusedLabelColor = HypeColors.BrandOrangeDeep,
         unfocusedLabelColor = Color(0xFF6F6761),
-        cursorColor = Color(0xFFD55A20),
+        cursorColor = HypeColors.BrandOrangeDeep,
+        errorTextColor = Color(0xFFA83432),
+        errorBorderColor = Color(0xFFA83432),
+        errorLabelColor = Color(0xFFA83432),
+        errorCursorColor = Color(0xFFA83432),
     )
 
 /**

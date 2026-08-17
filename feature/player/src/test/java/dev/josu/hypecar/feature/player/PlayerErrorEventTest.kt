@@ -10,6 +10,7 @@ import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -116,6 +117,9 @@ private val sampleTrack = Track(
 
 private fun newPlayerViewModel(playback: PlaybackRepository, me: MeRepository) = PlayerViewModel(
     playbackRepository = playback,
-    meRepository = me,
-    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(me, playback),
+    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(
+        me,
+        playback,
+        CoroutineScope(Dispatchers.Main.immediate),
+    ),
 )

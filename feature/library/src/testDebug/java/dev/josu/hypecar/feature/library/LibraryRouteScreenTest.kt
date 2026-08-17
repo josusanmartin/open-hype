@@ -1,11 +1,19 @@
 package dev.josu.hypecar.feature.library
 
 import androidx.compose.material3.Surface
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.AuthSession
@@ -55,8 +63,12 @@ class LibraryRouteScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("Library").assertIsDisplayed()
-        composeRule.onNodeWithText("Open your full library").assertIsDisplayed()
+        composeRule.onNodeWithText("Library")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit))
+        composeRule.onNodeWithText("Open your full library")
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Heading, Unit))
         composeRule.onNodeWithText("Sign in").assertIsDisplayed().performClick()
 
         composeRule.waitUntil(timeoutMillis = 2_000) { loginTapped }
@@ -91,6 +103,73 @@ class LibraryRouteScreenTest {
         composeRule.onNodeWithText("Beta").assertIsDisplayed()
     }
 
+    @Test
+    fun `destructive logout control has a 48dp touch target`() {
+        val me = StaticMe(favorites = listOf(track("a", "Alpha")))
+        composeRule.setContent {
+            HypeTheme {
+                LibraryRoute(
+                    onBlogClick = {},
+                    onUserClick = {},
+                    onLoginClick = {},
+                    viewModel = LibraryViewModel(
+                        authRepository = SignedInAuth(),
+                        meRepository = me,
+                        playbackRepository = NoOpPlayback,
+                        favoriteSyncManager = FavoriteSyncManager(me, NoOpPlayback),
+                    ),
+                )
+            }
+        }
+        composeRule.waitUntil(timeoutMillis = 2_000) {
+            composeRule.onAllNodesWithText("Alpha").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val bounds = composeRule.onNodeWithContentDescription("Log out")
+            .assertIsDisplayed()
+            .getUnclippedBoundsInRoot()
+
+        assertThat(bounds.width.value).isAtLeast(48f)
+        assertThat(bounds.height.value).isAtLeast(48f)
+    }
+
+    @Test
+    fun `incomplete logout is announced politely as an error`() {
+        val me = StaticMe(favorites = listOf(track("a", "Alpha")))
+        composeRule.setContent {
+            HypeTheme {
+                LibraryRoute(
+                    onBlogClick = {},
+                    onUserClick = {},
+                    onLoginClick = {},
+                    viewModel = LibraryViewModel(
+                        authRepository = IncompleteLogoutAuth(),
+                        meRepository = me,
+                        playbackRepository = NoOpPlayback,
+                        favoriteSyncManager = FavoriteSyncManager(me, NoOpPlayback),
+                    ),
+                )
+            }
+        }
+        composeRule.waitUntil(timeoutMillis = 2_000) {
+            composeRule.onAllNodesWithText("Alpha").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithContentDescription("Log out").performClick()
+        composeRule.onNodeWithText("Log out", substring = false).performClick()
+
+        val errorMessage =
+            "You are signed out, but some local account data could not be cleared. " +
+                "Try again before another person uses this device."
+        composeRule.waitUntil(timeoutMillis = 2_000) {
+            composeRule.onAllNodesWithText(errorMessage).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText(errorMessage)
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Error, errorMessage))
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+    }
+
     private fun track(id: String, title: String) = Track(
         id = id, artist = "x", title = title, lovedCount = 0,
         postedBy = "z", postedById = 0, postedCount = 0,
@@ -109,6 +188,16 @@ private class SignedInAuth : AuthRepository {
     override val session: Flow<AuthSession?> = MutableStateFlow(AuthSession("alice", "tok"))
     override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
     override suspend fun logout() = Unit
+}
+
+private class IncompleteLogoutAuth : AuthRepository {
+    private val currentSession = MutableStateFlow<AuthSession?>(AuthSession("alice", "tok"))
+    override val session: Flow<AuthSession?> = currentSession
+    override suspend fun login(usernameOrEmail: String, password: String): Result<AuthSession> = error("not used")
+    override suspend fun logout() {
+        currentSession.value = null
+        error("local cleanup failed")
+    }
 }
 
 private class StaticMe(

@@ -44,6 +44,78 @@ class DefaultMeRepositoryTest {
     }
 
     @Test
+    fun `scoped favorite mutation pins captured token on toggle and confirmation`() {
+        runBlocking {
+            val gate = AccountDataWriteGate()
+            val api = ConfirmingFavoriteApi(
+                toggleResponse = "unknown",
+                confirmedTrack = sampleTrackDto(id = "39v49", isLoved = true, lovedCount = 28),
+            )
+            val repository = DefaultMeRepository(
+                api = api,
+                trackDao = EmptyTrackDao,
+                trackListDao = EmptyTrackListDao,
+                playlistDao = EmptyPlaylistDao,
+                historyDao = EmptyHistoryDao,
+                json = Json,
+                accountDataWriteGate = gate,
+            )
+
+            repository.toggleFavoriteForAccount(
+                trackId = "39v49",
+                authToken = "token-a",
+                accountGeneration = gate.captureGeneration(),
+            )
+
+            assertThat(api.favoriteAuthTokens).containsExactly("token-a")
+            assertThat(api.trackAuthTokens).containsExactly("token-a")
+        }
+    }
+
+    @Test
+    fun `scoped favorite response cannot write after account switch`() = runBlocking {
+        val gate = AccountDataWriteGate()
+        val trackDao = MutableTrackDao(
+            sampleTrackEntity(id = "39v49", isLoved = false, lovedCount = 27),
+        )
+        val trackListDao = FakeTrackListDao().apply {
+            upsert(
+                TrackListEntity(
+                    key = "favorites:1:30",
+                    trackIdsJson = "[\"39v49\"]",
+                    updatedAtEpochSeconds = 1L,
+                ),
+            )
+        }
+        val capturedGeneration = gate.captureGeneration()
+        val api = SwitchingFavoriteApi {
+            assertThat(trackListDao.get("favorites:1:30")).isNull()
+            gate.deactivate()
+            gate.activate()
+        }
+        val repository = DefaultMeRepository(
+            api = api,
+            trackDao = trackDao,
+            trackListDao = trackListDao,
+            playlistDao = EmptyPlaylistDao,
+            historyDao = EmptyHistoryDao,
+            json = Json,
+            accountDataWriteGate = gate,
+        )
+
+        val result = repository.toggleFavoriteForAccount(
+            trackId = "39v49",
+            authToken = "token-a",
+            accountGeneration = capturedGeneration,
+        )
+
+        assertThat(result).isTrue()
+        assertThat(api.authTokens).containsExactly("token-a")
+        assertThat(trackDao.byId("39v49")?.isLoved).isFalse()
+        assertThat(trackListDao.get("favorites:1:30")).isNull()
+    }
+
+    @Test
     fun `toggleFavorite drops cached favorites lists so membership refetches`() {
         runBlocking {
             val trackListDao = FakeTrackListDao()
@@ -183,10 +255,19 @@ class DefaultMeRepositoryTest {
 
     @Test
     fun `toggleFavorite returns null when api rejects token`() = runBlocking {
+        val trackListDao = FakeTrackListDao().apply {
+            upsert(
+                TrackListEntity(
+                    key = "favorites:1:30",
+                    trackIdsJson = "[]",
+                    updatedAtEpochSeconds = System.currentTimeMillis() / 1000,
+                ),
+            )
+        }
         val repository = DefaultMeRepository(
             api = UnauthorizedFavoriteApi,
             trackDao = EmptyTrackDao,
-            trackListDao = EmptyTrackListDao,
+            trackListDao = trackListDao,
             playlistDao = EmptyPlaylistDao,
             historyDao = EmptyHistoryDao,
             json = Json,
@@ -195,6 +276,7 @@ class DefaultMeRepositoryTest {
         val result = repository.toggleFavorite("39v49")
 
         assertThat(result).isNull()
+        assertThat(trackListDao.get("favorites:1:30")).isNull()
     }
 }
 
@@ -202,9 +284,11 @@ private class RecordingFavoriteApi(
     private val response: String,
 ) : EmptyHypeApiService() {
     val favoriteRequests = mutableListOf<Pair<String, String>>()
+    val authTokens = mutableListOf<String?>()
 
-    override suspend fun toggleFavorite(value: String, type: String): ResponseBody {
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody {
         favoriteRequests += value to type
+        authTokens += authToken
         return response.toResponseBody()
     }
 }
@@ -214,21 +298,38 @@ private class ConfirmingFavoriteApi(
     private val confirmedTrack: TrackDto,
 ) : EmptyHypeApiService() {
     val favoriteRequests = mutableListOf<Pair<String, String>>()
+    val favoriteAuthTokens = mutableListOf<String?>()
     val trackRequests = mutableListOf<String>()
+    val trackAuthTokens = mutableListOf<String?>()
 
-    override suspend fun toggleFavorite(value: String, type: String): ResponseBody {
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody {
         favoriteRequests += value to type
+        favoriteAuthTokens += authToken
         return toggleResponse.toResponseBody()
     }
 
-    override suspend fun track(trackId: String): TrackDto {
+    override suspend fun track(trackId: String, authToken: String?): TrackDto {
         trackRequests += trackId
+        trackAuthTokens += authToken
         return confirmedTrack
     }
 }
 
+private class SwitchingFavoriteApi(
+    private val beforeResponse: suspend () -> Unit,
+) : EmptyHypeApiService() {
+    val authTokens = mutableListOf<String?>()
+
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody {
+        authTokens += authToken
+        beforeResponse()
+        return "1".toResponseBody()
+    }
+}
+
 private object UnauthorizedFavoriteApi : EmptyHypeApiService() {
-    override suspend fun toggleFavorite(value: String, type: String): ResponseBody = throw HttpException(Response.error<ResponseBody>(401, "Unauthorized".toResponseBody()))
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody =
+        throw HttpException(Response.error<ResponseBody>(401, "Unauthorized".toResponseBody()))
 }
 
 private object EmptyTrackDao : TrackDao {
@@ -318,14 +419,15 @@ private object EmptyHistoryDao : HistoryDao {
 private abstract class EmptyHypeApiService : HypeApiService {
     override suspend fun getToken(username: String, password: String, deviceId: String): GetTokenResponseDto = error("Not used")
     override suspend fun tracks(params: Map<String, String>): List<TrackDto> = emptyList()
-    override suspend fun track(trackId: String): TrackDto = error("Not used")
+    override suspend fun track(trackId: String, authToken: String?): TrackDto = error("Not used")
     override suspend fun popular(params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun favorites(params: Map<String, String>): List<TrackDto> = emptyList()
-    override suspend fun toggleFavorite(value: String, type: String): ResponseBody = "0".toResponseBody()
+    override suspend fun toggleFavorite(value: String, type: String, authToken: String?): ResponseBody =
+        "0".toResponseBody()
     override suspend fun playlistNames(): List<String> = emptyList()
     override suspend fun playlist(playlistId: Int, params: Map<String, String>): List<TrackDto> = emptyList()
     override suspend fun feed(params: Map<String, String>): List<TrackDto> = emptyList()
-    override suspend fun postHistory(type: String, itemId: String, position: Int): ResponseBody = "0".toResponseBody()
+    override suspend fun postHistory(type: String, itemId: String, position: Int, authToken: String?): ResponseBody = "0".toResponseBody()
     override suspend fun blogs(params: Map<String, String>): List<BlogDto> = emptyList()
     override suspend fun blog(blogId: Int): BlogDto = error("Not used")
     override suspend fun blogTracks(blogId: Int, params: Map<String, String>): List<TrackDto> = emptyList()

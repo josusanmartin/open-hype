@@ -27,4 +27,5 @@
     <string name="library_logout_confirm_title">¿Cerrar sesión?</string>
     <string name="library_logout_confirm_message">Se cerrará tu sesión y se borrarán la biblioteca en caché, el historial y las descargas de este dispositivo.</string>
     <string name="library_logout_cancel">Cancelar</string>
+    <string name="library_logout_failed">Has cerrado sesión, pero no se pudieron borrar algunos datos locales de la cuenta. Inténtalo de nuevo antes de que otra persona use este dispositivo.</string>
 </resources>

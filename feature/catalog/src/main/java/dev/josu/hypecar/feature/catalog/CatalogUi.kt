@@ -1,8 +1,5 @@
 package dev.josu.hypecar.feature.catalog
 
-import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,13 +15,17 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -48,11 +49,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -65,7 +72,9 @@ import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.UiErrorKind
 import dev.josu.hypecar.core.ui.errorLabel
 import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.isAutomotiveUi
 import dev.josu.hypecar.core.ui.pressFeedback
+import androidx.compose.ui.semantics.error as errorSemantics
 
 internal data class CatalogLayoutMetrics(
     val contentBottomPadding: Dp,
@@ -195,12 +204,13 @@ fun TrackListContent(
     tracks: List<Track>,
     isLoading: Boolean,
     error: UiErrorKind?,
+    onTrackClick: (Int) -> Unit,
+    onBlogClick: (Track) -> Unit,
+    modifier: Modifier = Modifier,
     chips: List<String> = emptyList(),
     selectedChipIndex: Int = 0,
     onChipSelected: (Int) -> Unit = {},
     onUtilityClick: (() -> Unit)? = null,
-    onTrackClick: (Int) -> Unit,
-    onBlogClick: (Track) -> Unit,
     onToggleFavorite: ((Track) -> Unit)? = null,
     // Forwarded to TrackListBody so the Retry button shown on error actually
     // triggers a reload. Callers that omit this still render the message but
@@ -212,21 +222,11 @@ fun TrackListContent(
     onRefresh: (() -> Unit)? = null,
     isRefreshing: Boolean = false,
     listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
-    modifier: Modifier = Modifier,
 ) {
     val isAutomotive = rememberIsAutomotiveUi()
-    // Errors while content is already on screen (failed pull-to-refresh or
-    // chip switch) surface as a snackbar — silently keeping the stale list
-    // reads as "the sort applied".
-    val snackbarHostState = androidx.compose.runtime.remember { androidx.compose.material3.SnackbarHostState() }
-    val errorOverContent = if (error != null && tracks.isNotEmpty()) error.errorLabel() else null
-    androidx.compose.runtime.LaunchedEffect(errorOverContent) {
-        errorOverContent?.let { snackbarHostState.showSnackbar(it, duration = androidx.compose.material3.SnackbarDuration.Short) }
-    }
     Scaffold(
         modifier = modifier,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         val heroImage = tracks.firstOrNull()?.bestThumbnail()
         TrackListBody(
@@ -266,11 +266,12 @@ fun TrackListBody(
     tracks: List<Track>,
     isLoading: Boolean,
     error: UiErrorKind?,
+    onTrackClick: (Int) -> Unit,
+    onBlogClick: (Track) -> Unit,
+    modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
     emphasizeFirstItem: Boolean = false,
     emptyMessage: String? = null,
-    onTrackClick: (Int) -> Unit,
-    onBlogClick: (Track) -> Unit,
     onRetry: (() -> Unit)? = null,
     onToggleFavorite: ((Track) -> Unit)? = null,
     onLoadMore: (() -> Unit)? = null,
@@ -279,10 +280,19 @@ fun TrackListBody(
     onRefresh: (() -> Unit)? = null,
     isRefreshing: Boolean = false,
     listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
-    modifier: Modifier = Modifier,
 ) {
     val isAutomotive = rememberIsAutomotiveUi()
     val metrics = if (isAutomotive) CatalogLayoutMetrics.automotive() else CatalogLayoutMetrics.phone()
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+    val errorOverContent = if (error != null && tracks.isNotEmpty()) error.errorLabel() else null
+    androidx.compose.runtime.LaunchedEffect(errorOverContent) {
+        errorOverContent?.let {
+            snackbarHostState.showSnackbar(
+                message = it,
+                duration = androidx.compose.material3.SnackbarDuration.Short,
+            )
+        }
+    }
 
     // Auto-load-more: when the last visible item is within 4 of the end, ask for more.
     if (onLoadMore != null && hasMore && tracks.isNotEmpty()) {
@@ -318,23 +328,28 @@ fun TrackListBody(
                     // Skeleton placeholders match the eventual list shape, so
                     // the user gets a sense of layout instead of a centred
                     // spinner pasted onto a blank screen.
-                    repeat(6) { idx ->
-                        item(key = "skeleton-$idx") {
-                            dev.josu.hypecar.core.ui.SkeletonTrackRow()
-                        }
+                    item(key = "loading-skeletons") {
+                        // One shared pulse drives the entire placeholder list,
+                        // and TalkBack announces loading once instead of six times.
+                        dev.josu.hypecar.core.ui.SkeletonTrackList(count = 6)
                     }
                 }
 
                 error != null && tracks.isEmpty() -> {
                     item(key = "error") {
+                        val errorMessage = error.errorLabel()
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(24.dp),
                         ) {
                             Text(
-                                text = error.errorLabel(),
+                                text = errorMessage,
                                 color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.semantics {
+                                    liveRegion = LiveRegionMode.Polite
+                                    errorSemantics(errorMessage)
+                                },
                             )
                             if (onRetry != null) {
                                 androidx.compose.material3.OutlinedButton(
@@ -399,19 +414,25 @@ fun TrackListBody(
         }
     }
 
-    // Pull-to-refresh wrapper (only when callback provided).
-    if (onRefresh != null) {
-        @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-        val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-            state = pullState,
-            isRefreshing = isRefreshing,
-            onRefresh = onRefresh,
-            modifier = modifier.fillMaxSize(),
-        ) { list() }
-    } else {
-        Box(modifier = modifier.fillMaxSize()) { list() }
+    Box(modifier = modifier.fillMaxSize()) {
+        // Pull-to-refresh wrapper (only when callback provided).
+        if (onRefresh != null) {
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+            @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                state = pullState,
+                isRefreshing = isRefreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) { list() }
+        } else {
+            Box(modifier = Modifier.fillMaxSize()) { list() }
+        }
+        androidx.compose.material3.SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
@@ -438,7 +459,8 @@ fun TrackRow(
     val cardOuterHorizontalPadding = metrics.cardOuterHorizontalPadding
     val cardOuterVerticalPadding = metrics.cardOuterVerticalPadding
     val rowSpacing = metrics.rowSpacing
-    val statsColor = if (featured) Color(0xFFE0D7CF) else hypeTokens.cards.onSurfaceMuted
+    val statsColor = if (featured) Color(0xFFE0D7CF) else Color(0xFF6B5B53)
+    val playLabel = stringResource(R.string.catalog_action_play)
     val titleStyle = if (isAutomotive) {
         MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
     } else {
@@ -477,7 +499,11 @@ fun TrackRow(
                 pressedScale = if (featured) 0.985f else 0.99f,
                 label = "trackRowPress",
             )
-            .clickable(onClick = onTrackClick),
+            .clickable(
+                onClickLabel = playLabel,
+                role = Role.Button,
+                onClick = onTrackClick,
+            ),
         color = if (featured) Color(0xFF101010) else Color(0xFFF9F4EE),
         shape = cardShape,
         border = if (featured) null else androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE1C9B2)),
@@ -546,18 +572,19 @@ fun TrackRow(
                     // on phone while the visible circle keeps its compact size.
                     Box(
                         modifier = Modifier
-                            .size(if (isAutomotive) 28.dp else 48.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(if (track.isLoved) Color(0x33FF6A21) else Color.Transparent)
                             .pressFeedback(pressedScale = 0.90f, label = "trackFavoritePress")
                             .clickable(
                                 onClickLabel = favoriteContentDescription,
-                                role = Role.Button,
+                                role = Role.Checkbox,
                                 onClick = onToggleFavorite,
                             )
                             .clearAndSetSemantics {
                                 contentDescription = favoriteContentDescription
-                                role = Role.Button
+                                role = Role.Checkbox
+                                toggleableState = ToggleableState(track.isLoved)
                                 onClick(label = favoriteContentDescription) {
                                     onToggleFavorite()
                                     true
@@ -639,6 +666,7 @@ fun TrackRow(
                     if (!isAutomotive) {
                         Box(
                             modifier = Modifier
+                                .sizeIn(minHeight = 48.dp)
                                 .clip(sourceChipShape)
                                 .border(
                                     1.dp,
@@ -646,7 +674,10 @@ fun TrackRow(
                                     sourceChipShape,
                                 )
                                 .pressFeedback(pressedScale = 0.96f, label = "trackSourcePress")
-                                .clickable(onClick = onBlogClick)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClick = onBlogClick,
+                                )
                                 .padding(horizontal = sourceChipPaddingH, vertical = sourceChipPaddingV),
                         ) {
                             Text(
@@ -666,7 +697,9 @@ fun TrackRow(
                     } else {
                         Surface(
                             onClick = onTrackClick,
-                            modifier = Modifier.pressFeedback(pressedScale = 0.92f, label = "trackPlayPress"),
+                            modifier = Modifier
+                                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                .pressFeedback(pressedScale = 0.92f, label = "trackPlayPress"),
                             shape = playShape,
                             color = Color.Transparent,
                         ) {
@@ -702,8 +735,10 @@ private fun CompactAutomotivePlayButton(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(9.dp)
+    val playLabel = stringResource(R.string.catalog_action_play)
     Box(
         modifier = Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .clip(shape)
             .border(
                 2.dp,
@@ -711,13 +746,17 @@ private fun CompactAutomotivePlayButton(
                 shape,
             )
             .pressFeedback(pressedScale = 0.92f, label = "compactTrackPlayPress")
-            .clickable(onClick = onClick)
+            .clickable(
+                onClickLabel = playLabel,
+                role = Role.Button,
+                onClick = onClick,
+            )
             .padding(4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = Icons.Default.PlayArrow,
-            contentDescription = stringResource(R.string.catalog_action_play),
+            contentDescription = null,
             tint = if (featured) Color.White else Color(0xFF5C5C5C),
             modifier = Modifier.size(14.dp),
         )
@@ -774,30 +813,27 @@ fun EditorialHeroHeader(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(heroHeight),
+            .heightIn(min = heroHeight),
     ) {
         if (imageUrl != null) {
             AsyncImage(
                 model = imageUrl,
                 contentDescription = null,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(heroHeight),
+                    .matchParentSize(),
                 contentScale = ContentScale.Crop,
             )
         } else {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(heroHeight)
+                    .matchParentSize()
                     .background(Color(0xFF3A150B)),
             )
         }
 
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(heroHeight)
+                .matchParentSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
@@ -854,7 +890,9 @@ fun EditorialHeroHeader(
                 lineHeight = metrics.heroTitleLineHeight,
                 maxLines = metrics.heroTitleMaxLines,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = metrics.heroTitleTopPadding),
+                modifier = Modifier
+                    .padding(top = metrics.heroTitleTopPadding)
+                    .semantics { heading() },
             )
             Text(
                 text = subtitle,
@@ -868,7 +906,8 @@ fun EditorialHeroHeader(
                 Row(
                     modifier = Modifier
                         .padding(top = metrics.heroChipsTopPadding, start = metrics.heroChipStartPadding)
-                        .horizontalScroll(rememberScrollState()),
+                        .horizontalScroll(rememberScrollState())
+                        .selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(metrics.heroChipSpacing),
                 ) {
                     chips.forEachIndexed { index, chip ->
@@ -877,11 +916,15 @@ fun EditorialHeroHeader(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
+                                .sizeIn(minHeight = 48.dp)
                                 .pressFeedback(pressedScale = 0.95f, label = "heroChipPress")
-                                .clickable(
+                                .selectable(
+                                    selected = selected,
                                     interactionSource = interactionSource,
                                     indication = null,
-                                ) { onChipSelected(index) },
+                                    role = Role.Tab,
+                                    onClick = { onChipSelected(index) },
+                                ),
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
@@ -933,32 +976,30 @@ private fun AutomotiveEditorialHeroHeader(
     metrics: CatalogLayoutMetrics,
     modifier: Modifier = Modifier,
 ) {
+    val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val heroHeight = metrics.heroBaseHeight + statusBarPadding
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(metrics.heroBaseHeight),
+            .heightIn(min = heroHeight),
     ) {
         if (imageUrl != null) {
             AsyncImage(
                 model = imageUrl,
                 contentDescription = null,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(metrics.heroBaseHeight),
+                modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop,
             )
         } else {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(metrics.heroBaseHeight)
+                    .matchParentSize()
                     .background(Color(0xFF3A150B)),
             )
         }
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(metrics.heroBaseHeight)
+                .matchParentSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
@@ -972,6 +1013,7 @@ private fun AutomotiveEditorialHeroHeader(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .padding(horizontal = metrics.heroHorizontalPadding, vertical = metrics.heroVerticalPadding),
         ) {
             Row(
@@ -988,6 +1030,7 @@ private fun AutomotiveEditorialHeroHeader(
                         lineHeight = metrics.heroTitleLineHeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.semantics { heading() },
                     )
                     Text(
                         text = subtitle,
@@ -1024,7 +1067,8 @@ private fun AutomotiveEditorialHeroHeader(
                 Row(
                     modifier = Modifier
                         .padding(top = metrics.heroChipsTopPadding)
-                        .horizontalScroll(rememberScrollState()),
+                        .horizontalScroll(rememberScrollState())
+                        .selectableGroup(),
                     horizontalArrangement = Arrangement.spacedBy(metrics.heroChipSpacing),
                 ) {
                     chips.forEachIndexed { index, chip ->
@@ -1032,6 +1076,7 @@ private fun AutomotiveEditorialHeroHeader(
                         val interactionSource = remember { MutableInteractionSource() }
                         Box(
                             modifier = Modifier
+                                .sizeIn(minHeight = 48.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(if (selected) Color.White else Color(0x22FFFFFF))
                                 .then(
@@ -1046,10 +1091,13 @@ private fun AutomotiveEditorialHeroHeader(
                                     },
                                 )
                                 .pressFeedback(pressedScale = 0.95f, label = "automotiveHeroChipPress")
-                                .clickable(
+                                .selectable(
+                                    selected = selected,
                                     interactionSource = interactionSource,
                                     indication = null,
-                                ) { onChipSelected(index) },
+                                    role = Role.Tab,
+                                    onClick = { onChipSelected(index) },
+                                ),
                         ) {
                             Text(
                                 text = chip,
@@ -1075,11 +1123,7 @@ fun rememberIsAutomotiveUi(): Boolean {
     val context = LocalContext.current
     val uiMode = context.resources.configuration.uiMode
     return remember(context, uiMode) {
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
-            (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR ||
-            Build.PRODUCT.contains("gcar", ignoreCase = true) ||
-            Build.DEVICE.contains("car", ignoreCase = true) ||
-            Build.FINGERPRINT.contains("gcar", ignoreCase = true)
+        context.isAutomotiveUi()
     }
 }
 

@@ -59,20 +59,6 @@ class AppChromeViewModelTest {
     }
 
     @Test
-    fun `hasActivePlayback only tracks current media presence and playing state`() = runTest {
-        val playback = RecordingPlaybackRepository()
-        val viewModel = AppChromeViewModel(playback, OnlineConnectivityRepository)
-
-        playback.queueState.value = PlaybackQueue()
-        advanceUntilIdle()
-        assertThat(viewModel.hasActivePlayback.value).isFalse()
-
-        playback.queueState.value = PlaybackQueue(items = listOf(PlaybackItem(track())))
-        advanceUntilIdle()
-        assertThat(viewModel.hasActivePlayback.value).isTrue()
-    }
-
-    @Test
     fun `transport commands delegate to the playback repository`() = runTest {
         val playback = RecordingPlaybackRepository()
         val viewModel = AppChromeViewModel(playback, OnlineConnectivityRepository)

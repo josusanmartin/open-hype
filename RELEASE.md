@@ -18,7 +18,7 @@ For GitHub Actions, prefer storing the keystore file as a base64 secret named `H
 Then build the Play Store bundle:
 
 ```bash
-./gradlew clean testDebugUnitTest lintDebug bundleRelease
+./gradlew clean testDebugUnitTest lintDebug -PrequireReleaseSigning=true bundleRelease
 ```
 
 The signed bundle is written to:
@@ -27,11 +27,16 @@ The signed bundle is written to:
 app/build/outputs/bundle/release/app-release.aab
 ```
 
-If the signing variables are not set locally, Gradle fails release packaging before producing APK/AAB outputs. Use debug builds for local verification.
+Tagged GitHub releases also attach a `SHA256SUMS` file covering the published
+APK and AAB. Verify a downloaded artifact with `sha256sum -c SHA256SUMS` before
+distributing it elsewhere.
+
+The required `-PrequireReleaseSigning=true` guard fails packaging before producing APK/AAB outputs when any signing variable is missing. Plain release tasks are allowed only for local unsigned R8 verification. Use debug builds for installable local verification.
 
 ## Store Review
 
 - Use neutral wording: this is an unofficial open-source Hype Machine client.
 - Complete Play Data Safety based on the actual app behavior: account username/token storage, network requests to Hype Machine, and playback metadata.
 - Do not claim affiliation with Hype Machine.
-- Re-run `./gradlew spotlessCheck checkArchitecture testDebugUnitTest testReleaseUnitTest lintDebug lintRelease koverVerify assembleRelease bundleRelease` before uploading.
+- Upload this bundle only to the mobile/projected-Android-Auto track. A Play AAOS release requires a separate automotive application module and artifact; the current unified bundle is not eligible for that track.
+- Re-run `scripts/dev.sh ci`, then `./gradlew -PrequireReleaseSigning=true assembleRelease bundleRelease` before uploading.

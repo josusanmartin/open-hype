@@ -46,6 +46,9 @@ jobs:
       - name: Permission for gradlew
         run: chmod +x gradlew
 
+      - name: Script tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - name: Spotless / ktlint check
         run: ./gradlew --no-daemon spotlessCheck
 

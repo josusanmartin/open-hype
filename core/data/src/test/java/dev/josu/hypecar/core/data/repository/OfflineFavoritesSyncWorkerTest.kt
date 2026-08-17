@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -33,10 +34,28 @@ class OfflineFavoritesSyncWorkerTest {
     }
 
     @Test
-    fun `worker requests retry when repository status carries an error`() = runTest {
+    fun `worker reports permanent failure when repository status carries an error`() = runTest {
         val repo = ScriptedOfflineRepository(
             statusAfterSync = OfflineDownloadStatus(error = "io fail"),
         )
+
+        val result = buildWorker(repo).doWork()
+
+        assertThat(result).isEqualTo(ListenableWorker.Result.failure())
+    }
+
+    @Test
+    fun `worker reports permanent failure when sync throws runtime exception`() = runTest {
+        val repo = ScriptedOfflineRepository(throwOnSync = RuntimeException("boom"))
+
+        val result = buildWorker(repo).doWork()
+
+        assertThat(result).isEqualTo(ListenableWorker.Result.failure())
+    }
+
+    @Test
+    fun `worker requests retry when sync throws io exception`() = runTest {
+        val repo = ScriptedOfflineRepository(throwOnSync = IOException("offline"))
 
         val result = buildWorker(repo).doWork()
 
@@ -44,12 +63,75 @@ class OfflineFavoritesSyncWorkerTest {
     }
 
     @Test
-    fun `worker requests retry when sync throws`() = runTest {
-        val repo = ScriptedOfflineRepository(throwOnSync = RuntimeException("boom"))
+    fun `worker uses successful attempt result instead of stale global error`() = runTest {
+        val repo = AttemptReportingOfflineRepository(
+            attemptResult = OfflineSyncAttemptResult.Success,
+            status = OfflineDownloadStatus(error = "stale failure from an older attempt"),
+        )
+
+        val result = buildWorker(repo).doWork()
+
+        assertThat(result).isEqualTo(ListenableWorker.Result.success())
+        assertThat(repo.attemptCount).isEqualTo(1)
+        assertThat(repo.publicSyncCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `worker reports permanent failed attempt even before global status is observed`() = runTest {
+        val repo = AttemptReportingOfflineRepository(
+            attemptResult = OfflineSyncAttemptResult.Failure("attempt failed"),
+            status = OfflineDownloadStatus(error = null),
+        )
+
+        val result = buildWorker(repo).doWork()
+
+        assertThat(result).isEqualTo(ListenableWorker.Result.failure())
+        assertThat(repo.attemptCount).isEqualTo(1)
+        assertThat(repo.publicSyncCount).isEqualTo(0)
+    }
+
+    @Test
+    fun `worker reports permanent failure when attempt runner throws runtime exception`() = runTest {
+        val repo = AttemptReportingOfflineRepository(
+            attemptResult = OfflineSyncAttemptResult.Success,
+            status = OfflineDownloadStatus(),
+            attemptFailure = RuntimeException(),
+        )
+
+        val result = buildWorker(repo).doWork()
+
+        assertThat(result).isEqualTo(ListenableWorker.Result.failure())
+        assertThat(repo.attemptCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `worker retries an explicitly retryable failed attempt`() = runTest {
+        val repo = AttemptReportingOfflineRepository(
+            attemptResult = OfflineSyncAttemptResult.Failure(
+                message = "temporarily unavailable",
+                retryable = true,
+            ),
+            status = OfflineDownloadStatus(),
+        )
 
         val result = buildWorker(repo).doWork()
 
         assertThat(result).isEqualTo(ListenableWorker.Result.retry())
+        assertThat(repo.attemptCount).isEqualTo(1)
+    }
+
+    @Test
+    fun `worker retries when attempt runner throws io exception`() = runTest {
+        val repo = AttemptReportingOfflineRepository(
+            attemptResult = OfflineSyncAttemptResult.Success,
+            status = OfflineDownloadStatus(),
+            attemptFailure = IOException("temporarily offline"),
+        )
+
+        val result = buildWorker(repo).doWork()
+
+        assertThat(result).isEqualTo(ListenableWorker.Result.retry())
+        assertThat(repo.attemptCount).isEqualTo(1)
     }
 
     private fun buildWorker(repo: OfflineRepository): OfflineFavoritesSyncWorker =
@@ -79,6 +161,34 @@ private class ScriptedOfflineRepository(
         syncCount += 1
         throwOnSync?.let { throw it }
         _status.value = statusAfterSync
+    }
+    override suspend fun clearDownloads() = Unit
+    override fun cachedAudioUri(trackId: String): String? = null
+}
+
+private class AttemptReportingOfflineRepository(
+    private val attemptResult: OfflineSyncAttemptResult,
+    status: OfflineDownloadStatus,
+    private val attemptFailure: Throwable? = null,
+) : OfflineRepository,
+    OfflineSyncAttemptRunner {
+    private val _status = MutableStateFlow(status)
+    override val status: StateFlow<OfflineDownloadStatus> = _status
+    var attemptCount: Int = 0
+        private set
+    var publicSyncCount: Int = 0
+        private set
+
+    override suspend fun runSyncAttempt(): OfflineSyncAttemptResult {
+        attemptCount += 1
+        attemptFailure?.let { throw it }
+        return attemptResult
+    }
+
+    override suspend fun setEnabled(enabled: Boolean) = Unit
+    override suspend fun setQuotaBytes(quotaBytes: Long) = Unit
+    override suspend fun syncFavorites() {
+        publicSyncCount += 1
     }
     override suspend fun clearDownloads() = Unit
     override fun cachedAudioUri(trackId: String): String? = null

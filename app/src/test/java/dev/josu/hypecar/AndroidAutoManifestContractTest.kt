@@ -22,6 +22,7 @@ class AndroidAutoManifestContractTest {
         assertThat(automotiveDescriptorText).contains("""<uses name="media" />""")
         assertThat(manifestText).contains("android.media.browse.MediaBrowserService")
         assertThat(manifestText).contains("androidx.media3.session.MediaLibraryService")
+        assertThat(manifestText).contains("androidx.car.app.launchable")
         assertThat(manifestText).contains("android:exported=\"true\"")
     }
 
@@ -49,6 +50,18 @@ class AndroidAutoManifestContractTest {
         // Android 14+ requires the matching runtime permission for the
         // mediaPlayback foreground service type.
         assertThat(manifestText).contains("android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK")
+    }
+
+    @Test
+    fun `manifest does not request notification permission for exempt media sessions`() {
+        assertThat(manifestText).doesNotContain("android.permission.POST_NOTIFICATIONS")
+    }
+
+    @Test
+    fun `manifest opts in to Media3 playback resumption`() {
+        assertThat(manifestText).contains("androidx.media3.session.MediaButtonReceiver")
+        assertThat(manifestText).contains("android:permission=\"android.permission.MEDIA_CONTENT_CONTROL\"")
+        assertThat(manifestText).contains("android.intent.action.MEDIA_BUTTON")
     }
 
     @Test

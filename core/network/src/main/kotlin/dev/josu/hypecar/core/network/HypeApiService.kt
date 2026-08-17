@@ -10,6 +10,7 @@ import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 import retrofit2.http.QueryMap
 
 interface HypeApiService {
@@ -29,6 +30,7 @@ interface HypeApiService {
     @GET("tracks/{trackId}")
     suspend fun track(
         @Path("trackId") trackId: String,
+        @Query("hm_token") authToken: String? = null,
     ): TrackDto
 
     @GET("popular")
@@ -46,6 +48,7 @@ interface HypeApiService {
     suspend fun toggleFavorite(
         @Field("val") value: String,
         @Field("type") type: String = "item",
+        @Query("hm_token") authToken: String? = null,
     ): ResponseBody
 
     @GET("me/playlist_names")
@@ -68,6 +71,7 @@ interface HypeApiService {
         @Field("type") type: String = "listen",
         @Field("itemid") itemId: String,
         @Field("pos") position: Int,
+        @Query("hm_token") authToken: String? = null,
     ): ResponseBody
 
     @GET("blogs")

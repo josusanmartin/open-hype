@@ -1,6 +1,7 @@
 package dev.josu.hypecar.core.data.repository
 
 import com.google.common.truth.Truth.assertThat
+import dev.josu.hypecar.core.network.AuthTokenProvider
 import dev.josu.hypecar.core.network.dto.toModel
 import kotlinx.coroutines.runBlocking
 import okhttp3.ResponseBody
@@ -44,6 +45,30 @@ class DefaultHistoryRepositoryTest {
     }
 
     @Test
+    fun `account switch before remote post cannot send the new account token`() = runBlocking {
+        val gate = AccountDataWriteGate(initiallyActive = true)
+        val tokens = MutableHistoryTokenProvider("account-a-token")
+        val api = ScriptedHistoryApi(response = "1")
+        val repo = DefaultHistoryRepository(
+            api = api,
+            historyDao = FakeHistoryDao(),
+            trackDao = FakeTrackDao(),
+            accountDataWriteGate = gate,
+            authTokenProvider = tokens,
+            beforeRemotePost = {
+                gate.deactivate()
+                tokens.token = "account-b-token"
+                gate.activate()
+            },
+        )
+
+        val acknowledged = repo.postListen("account-a-track", positionSeconds = 30)
+
+        assertThat(acknowledged).isFalse()
+        assertThat(api.requested).isNull()
+    }
+
+    @Test
     fun `mappers convert dto to entity through toModel + toEntity round trip`() {
         val dto = sampleTrackDto("a")
         val track = dto.toModel()
@@ -60,9 +85,18 @@ private class ScriptedHistoryApi(
     var requested: Pair<String, Int>? = null
         private set
 
-    override suspend fun postHistory(type: String, itemId: String, position: Int): ResponseBody {
+    override suspend fun postHistory(
+        type: String,
+        itemId: String,
+        position: Int,
+        authToken: String?,
+    ): ResponseBody {
         requested = itemId to position
         if (throwIo) throw IOException("offline")
         return response.toResponseBody()
     }
+}
+
+private class MutableHistoryTokenProvider(var token: String?) : AuthTokenProvider {
+    override fun currentToken(): String? = token
 }

@@ -17,9 +17,11 @@ class HypeApiInterceptor(
         }
 
         val updatedUrl = originalUrl.newBuilder().apply {
-            val token = authTokenProvider.currentToken()
-            if (!token.isNullOrBlank() && originalUrl.queryParameter("hm_token") == null) {
-                addQueryParameter("hm_token", token)
+            if (originalUrl.queryParameter("hm_token") == null) {
+                authTokenProvider.awaitTokenInitialization()
+                authTokenProvider.currentToken()
+                    ?.takeUnless(String::isBlank)
+                    ?.let { addQueryParameter("hm_token", it) }
             }
         }.build()
 
@@ -31,7 +33,10 @@ class HypeApiInterceptor(
     }
 
     private fun HttpUrl.shouldReceiveAuthToken(): Boolean =
-        host == "api.hypem.com" || (devProxyAllowed && isDevProxyHost())
+        !isLoginRequest() && (host == "api.hypem.com" || (devProxyAllowed && isDevProxyHost()))
+
+    private fun HttpUrl.isLoginRequest(): Boolean =
+        encodedPath.trimEnd('/').endsWith("/get_token")
 
     private fun HttpUrl.isDevProxyHost(): Boolean =
         encodedPath.startsWith("/v2/") &&

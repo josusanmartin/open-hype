@@ -1,18 +1,13 @@
 package dev.josu.hypecar
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -65,7 +60,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -81,6 +75,7 @@ import coil.request.ImageRequest
 import dagger.hilt.android.AndroidEntryPoint
 import dev.josu.hypecar.core.ui.HypeTheme
 import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.isAutomotiveUi
 import dev.josu.hypecar.core.ui.pressFeedback
 import dev.josu.hypecar.feature.auth.LoginRoute
 import dev.josu.hypecar.feature.catalog.LatestRoute
@@ -113,13 +108,11 @@ class MainActivity : ComponentActivity() {
             // exposes via rememberIsAutomotiveUi, kept inline here so the
             // theme call site stays self-contained.
             val context = LocalContext.current
-            val uiMode = context.resources.configuration.uiMode
-            val isAutomotive = context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
-                (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR ||
-                Build.PRODUCT.contains("gcar", ignoreCase = true) ||
-                Build.DEVICE.contains("car", ignoreCase = true) ||
-                Build.FINGERPRINT.contains("gcar", ignoreCase = true)
-            HypeTheme(isAutomotive = isAutomotive) {
+            val isAutomotive = context.isAutomotiveUi()
+            HypeTheme(
+                darkTheme = isAutomotive || isSystemInDarkTheme(),
+                isAutomotive = isAutomotive,
+            ) {
                 MainApp()
             }
         }
@@ -132,7 +125,7 @@ class MainActivity : ComponentActivity() {
  * a near-black player, or light icons over the cream login, are invisible.
  */
 @Composable
-private fun SystemBarIconAppearance(lightBackground: Boolean) {
+internal fun SystemBarIconAppearance(lightBackground: Boolean) {
     val view = LocalView.current
     DisposableEffect(lightBackground, view) {
         val window = (view.context as? android.app.Activity)?.window
@@ -196,9 +189,7 @@ internal data class AppChromeMetrics(
             miniPlayerProgressHorizontalPadding = 8.dp,
             miniPlayerProgressHeight = 2.dp,
             miniPlayerBottomSpacer = 4.dp,
-            // Bumped 40→44dp (the smallest size that still passes M3
-            // minimumInteractiveSize) per the design-review touch-target audit.
-            miniPlayerIconButtonSize = 44.dp,
+            miniPlayerIconButtonSize = 48.dp,
             miniPlayerIconSize = 22.dp,
         )
 
@@ -221,20 +212,18 @@ internal data class AppChromeMetrics(
 
 @Composable
 fun MainApp() {
-    val navController = rememberNavController()
     // The activity computes the automotive flag once and provides it through
     // HypeTheme; reading the composition local here keeps the value in sync
     // with the active token table (mini-player metrics, padding etc.).
     val isAutomotive = dev.josu.hypecar.core.ui.LocalIsAutomotive.current
-    val chromeMetrics = if (isAutomotive) AppChromeMetrics.automotive() else AppChromeMetrics.phone()
+    if (isAutomotive) {
+        AutomotiveSetupApp()
+        return
+    }
+    val navController = rememberNavController()
+    val chromeMetrics = AppChromeMetrics.phone()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val chromeViewModel: AppChromeViewModel = hiltViewModel()
-    val miniPlayerState by chromeViewModel.miniPlayer.collectAsStateWithLifecycle()
-    val hasActivePlayback by chromeViewModel.hasActivePlayback.collectAsStateWithLifecycle()
-    val connectivity by chromeViewModel.connectivity.collectAsStateWithLifecycle()
-    MediaNotificationPermissionGate(
-        enabled = !isAutomotive && hasActivePlayback,
-    )
     val currentRoute = backStackEntry?.destination?.route
     SystemBarIconAppearance(lightBackground = currentRoute == "login")
     val destinations = listOf(
@@ -255,11 +244,6 @@ fun MainApp() {
         },
     )
     val showBottomBar = currentRoute in destinations.map { it.route } && currentRoute != "player"
-    // The mini player stays visible on detail routes (blog/user/tag) too —
-    // starting playback from a detail screen must leave transport controls on
-    // screen. Only the full player screen replaces it.
-    val miniPlayer = if (currentRoute == "player") null else miniPlayerState
-
     // Listen for SessionEventBus emissions (UnauthorizedSessionInterceptor
     // emits Expired on 401) and surface a snackbar so the user isn't
     // silently signed out into an empty Library.
@@ -278,103 +262,27 @@ fun MainApp() {
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         bottomBar = {
-            // Show the bottom chrome column when any of: the bottom nav is
-            // visible, the mini-player has a track, or the connectivity
-            // banner needs to surface (so the offline note isn't hidden on
-            // routes that hide the nav).
-            val showOfflineBanner = connectivity != dev.josu.hypecar.core.model.repository.Connectivity.Online
-            if (showBottomBar || miniPlayer != null || showOfflineBanner) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(hypeTokens.chrome.canvas)
-                        .then(
-                            if (chromeMetrics.bottomBarUsesExternalSystemBarPadding) {
-                                Modifier.navigationBarsPadding()
-                            } else {
-                                Modifier
-                            },
-                        ),
-                ) {
-                    // Connectivity banner sits above the mini-player + nav bar
-                    // so any time the user leaves Online they see "showing
-                    // cached data" without it shoving content off the screen.
-                    dev.josu.hypecar.core.ui.ConnectivityBanner(
-                        isOffline = connectivity == dev.josu.hypecar.core.model.repository.Connectivity.Offline,
-                        isLimited = connectivity == dev.josu.hypecar.core.model.repository.Connectivity.Limited,
-                    )
-                    miniPlayer?.let { miniPlayerState ->
-                        val haptics = LocalHapticFeedback.current
-                        val tick: () -> Unit = {
-                            if (!isAutomotive) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            AppBottomChrome(
+                currentRoute = currentRoute,
+                showBottomBar = showBottomBar,
+                destinations = destinations,
+                chromeViewModel = chromeViewModel,
+                metrics = chromeMetrics,
+                onOpenPlayer = { navController.navigate("player") { launchSingleTop = true } },
+                onDestinationClick = { destination ->
+                    if (currentRoute == destination.route) {
+                        dev.josu.hypecar.core.model.ScrollToTopBus.request(destination.route)
+                    } else {
+                        navController.navigate(destination.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
                             }
-                        }
-                        MiniPlayerBar(
-                            uiState = miniPlayerState,
-                            onOpenPlayer = { navController.navigate("player") { launchSingleTop = true } },
-                            onTogglePlayPause = {
-                                tick()
-                                chromeViewModel.togglePlayPause()
-                            },
-                            onSkipNext = {
-                                tick()
-                                chromeViewModel.skipNext()
-                            },
-                            onSkipPrevious = {
-                                tick()
-                                chromeViewModel.skipPrevious()
-                            },
-                            metrics = chromeMetrics,
-                        )
-                    }
-                    if (showBottomBar) {
-                        NavigationBar(
-                            modifier = chromeMetrics.bottomNavHeight?.let { Modifier.height(it) } ?: Modifier,
-                            containerColor = hypeTokens.chrome.canvas,
-                            windowInsets = WindowInsets(0, 0, 0, 0),
-                        ) {
-                            destinations.forEach { destination ->
-                                NavigationBarItem(
-                                    selected = currentRoute == destination.route,
-                                    onClick = {
-                                        if (currentRoute == destination.route) {
-                                            // Same tab tapped — ask the visible route to scroll to top.
-                                            dev.josu.hypecar.core.model.ScrollToTopBus.request(destination.route)
-                                        } else {
-                                            navController.navigate(destination.route) {
-                                                popUpTo(navController.graph.findStartDestination().id) {
-                                                    saveState = true
-                                                }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        }
-                                    },
-                                    icon = destination.icon,
-                                    label = {
-                                        Text(
-                                            destination.label,
-                                            style = if (isAutomotive) {
-                                                MaterialTheme.typography.labelLarge
-                                            } else {
-                                                MaterialTheme.typography.bodySmall
-                                            },
-                                        )
-                                    },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = hypeTokens.chrome.navSelected,
-                                        selectedTextColor = hypeTokens.chrome.navSelected,
-                                        unselectedIconColor = hypeTokens.chrome.navUnselected,
-                                        unselectedTextColor = hypeTokens.chrome.navUnselected,
-                                        indicatorColor = Color.Transparent,
-                                    ),
-                                )
-                            }
+                            launchSingleTop = true
+                            restoreState = true
                         }
                     }
-                }
-            }
+                },
+            )
         },
     ) { innerPadding ->
         NavHost(
@@ -431,24 +339,90 @@ fun MainApp() {
     }
 }
 
+/**
+ * Owns the frequently changing playback-progress subscription so the app's
+ * NavHost and destination list do not recompose every second while music plays.
+ */
 @Composable
-private fun MediaNotificationPermissionGate(enabled: Boolean) {
-    val context = LocalContext.current
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) {
-        // Media3 already owns the notification; once granted, the active session
-        // notification becomes visible without rebuilding playback state.
-    }
+private fun AppBottomChrome(
+    currentRoute: String?,
+    showBottomBar: Boolean,
+    destinations: List<NavDestinationItem>,
+    chromeViewModel: AppChromeViewModel,
+    metrics: AppChromeMetrics,
+    onOpenPlayer: () -> Unit,
+    onDestinationClick: (NavDestinationItem) -> Unit,
+) {
+    val miniPlayerState by chromeViewModel.miniPlayer.collectAsStateWithLifecycle()
+    val connectivity by chromeViewModel.connectivity.collectAsStateWithLifecycle()
+    val miniPlayer = if (currentRoute == "player") null else miniPlayerState
+    val showOfflineBanner = connectivity != dev.josu.hypecar.core.model.repository.Connectivity.Online
+    if (!showBottomBar && miniPlayer == null && !showOfflineBanner) return
 
-    LaunchedEffect(context, enabled) {
-        if (!enabled) return@LaunchedEffect
-        val grantState = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS,
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(hypeTokens.chrome.canvas)
+            .then(
+                if (metrics.bottomBarUsesExternalSystemBarPadding) {
+                    Modifier.navigationBarsPadding()
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
+        dev.josu.hypecar.core.ui.ConnectivityBanner(
+            isOffline = connectivity == dev.josu.hypecar.core.model.repository.Connectivity.Offline,
+            isLimited = connectivity == dev.josu.hypecar.core.model.repository.Connectivity.Limited,
         )
-        if (MediaNotificationPermissionPolicy.shouldRequest(Build.VERSION.SDK_INT, grantState)) {
-            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        miniPlayer?.let { state ->
+            val haptics = LocalHapticFeedback.current
+            val tick = { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+            MiniPlayerBar(
+                uiState = state,
+                onOpenPlayer = onOpenPlayer,
+                onTogglePlayPause = {
+                    tick()
+                    chromeViewModel.togglePlayPause()
+                },
+                onSkipNext = {
+                    tick()
+                    chromeViewModel.skipNext()
+                },
+                onSkipPrevious = {
+                    tick()
+                    chromeViewModel.skipPrevious()
+                },
+                metrics = metrics,
+            )
+        }
+        if (showBottomBar) {
+            NavigationBar(
+                modifier = metrics.bottomNavHeight?.let { Modifier.height(it) } ?: Modifier,
+                containerColor = hypeTokens.chrome.canvas,
+                windowInsets = WindowInsets(0, 0, 0, 0),
+            ) {
+                destinations.forEach { destination ->
+                    NavigationBarItem(
+                        selected = currentRoute == destination.route,
+                        onClick = { onDestinationClick(destination) },
+                        icon = destination.icon,
+                        label = {
+                            Text(
+                                destination.label,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = hypeTokens.chrome.navSelected,
+                            selectedTextColor = hypeTokens.chrome.navSelected,
+                            unselectedIconColor = hypeTokens.chrome.navUnselected,
+                            unselectedTextColor = hypeTokens.chrome.navUnselected,
+                            indicatorColor = Color.Transparent,
+                        ),
+                    )
+                }
+            }
         }
     }
 }

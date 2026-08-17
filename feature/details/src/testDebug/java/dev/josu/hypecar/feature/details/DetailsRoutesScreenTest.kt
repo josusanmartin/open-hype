@@ -2,17 +2,26 @@ package dev.josu.hypecar.feature.details
 
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.lifecycle.SavedStateHandle
+import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
 import dev.josu.hypecar.core.model.Blog
+import dev.josu.hypecar.core.model.FeedItem
+import dev.josu.hypecar.core.model.FeedMode
 import dev.josu.hypecar.core.model.LatestMode
 import dev.josu.hypecar.core.model.PlaybackQueue
+import dev.josu.hypecar.core.model.Playlist
 import dev.josu.hypecar.core.model.PopularMode
 import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.User
 import dev.josu.hypecar.core.model.repository.CatalogRepository
+import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.ui.HypeTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +63,7 @@ class DetailsRoutesScreenTest {
                             savedStateHandle = SavedStateHandle(mapOf("blogId" to 22246)),
                             catalogRepository = catalog,
                             playbackRepository = DetailsScreenNoOpPlayback,
+                            favoriteSyncManager = detailsScreenFavoriteSync(),
                         ),
                     )
                 }
@@ -67,6 +77,42 @@ class DetailsRoutesScreenTest {
         composeRule.onNodeWithText("1234 followers").assertIsDisplayed()
         composeRule.onNodeWithText("567 tracks").assertIsDisplayed()
         composeRule.onNodeWithText("Alpha").assertIsDisplayed()
+    }
+
+    @Test
+    fun `detail back affordance has a 48dp touch target`() {
+        val catalog = ScriptedDetailsCatalog(
+            blog = Blog(
+                id = 22246,
+                name = "Destroy//Exist",
+                url = "https://destroyexist.com",
+                followerCount = 1,
+                trackCount = 1,
+                imageUrl = null,
+                imageUrlSmall = null,
+            ),
+        )
+        composeRule.setContent {
+            HypeTheme {
+                BlogDetailRoute(
+                    onBlogClick = {},
+                    onBack = {},
+                    viewModel = BlogDetailViewModel(
+                        savedStateHandle = SavedStateHandle(mapOf("blogId" to 22246)),
+                        catalogRepository = catalog,
+                        playbackRepository = DetailsScreenNoOpPlayback,
+                        favoriteSyncManager = detailsScreenFavoriteSync(),
+                    ),
+                )
+            }
+        }
+
+        val bounds = composeRule.onNodeWithContentDescription("Back")
+            .assertIsDisplayed()
+            .getUnclippedBoundsInRoot()
+
+        com.google.common.truth.Truth.assertThat(bounds.width.value).isAtLeast(48f)
+        com.google.common.truth.Truth.assertThat(bounds.height.value).isAtLeast(48f)
     }
 
     @Test
@@ -92,6 +138,7 @@ class DetailsRoutesScreenTest {
                             savedStateHandle = SavedStateHandle(mapOf("username" to "alice")),
                             catalogRepository = catalog,
                             playbackRepository = DetailsScreenNoOpPlayback,
+                            favoriteSyncManager = detailsScreenFavoriteSync(),
                         ),
                     )
                 }
@@ -158,4 +205,15 @@ private object DetailsScreenNoOpPlayback : PlaybackRepository {
     override suspend fun toggleShuffle() = Unit
     override suspend fun cycleRepeatMode() = Unit
     override suspend fun updateFavorite(trackId: String, isLoved: Boolean) = Unit
+}
+
+private fun detailsScreenFavoriteSync() = FavoriteSyncManager(DetailsScreenNoOpMe, DetailsScreenNoOpPlayback)
+
+private object DetailsScreenNoOpMe : MeRepository {
+    override suspend fun favorites(page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun toggleFavorite(trackId: String): Boolean? = null
+    override suspend fun playlistNames(): List<Playlist> = emptyList()
+    override suspend fun playlist(playlistId: Int, page: Int, count: Int, forceRefresh: Boolean): List<Track> = emptyList()
+    override suspend fun feed(mode: FeedMode, page: Int, count: Int, forceRefresh: Boolean): List<FeedItem> = emptyList()
+    override suspend fun history(page: Int, count: Int): List<Track> = emptyList()
 }

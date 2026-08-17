@@ -1,12 +1,8 @@
 package dev.josu.hypecar.feature.player
 
-import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.os.Build
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
@@ -29,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,6 +33,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -53,6 +51,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
@@ -74,6 +73,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -85,6 +86,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -92,10 +94,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -108,13 +113,13 @@ import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dev.josu.hypecar.core.data.repository.FavoriteEdit
 import dev.josu.hypecar.core.data.repository.FavoriteSyncManager
+import dev.josu.hypecar.core.data.repository.FavoriteToggleOutcome
 import dev.josu.hypecar.core.model.PlaybackQueue
 import dev.josu.hypecar.core.model.PlaybackRepeatMode
-import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.ui.hypeTokens
+import dev.josu.hypecar.core.ui.isAutomotiveUi
 import dev.josu.hypecar.core.ui.pressFeedback
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -208,13 +213,11 @@ internal data class PlayerLayoutMetrics(
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
     private val playbackRepository: PlaybackRepository,
-    private val meRepository: MeRepository,
     private val favoriteSyncManager: FavoriteSyncManager,
 ) : ViewModel() {
     val queue: StateFlow<PlaybackQueue> = playbackRepository.queue
     private val _favoriteErrors = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val favoriteErrors: SharedFlow<Unit> = _favoriteErrors.asSharedFlow()
-    private val favoriteSyncStates = mutableMapOf<String, FavoriteSyncState>()
 
     fun togglePlayPause() {
         viewModelScope.launch { playbackRepository.togglePlayPause() }
@@ -264,68 +267,14 @@ class PlayerViewModel @Inject constructor(
 
     fun toggleFavorite() {
         val current = queue.value.current?.track ?: return
-        val trackId = current.id
-        val syncState = favoriteSyncStates.getOrPut(trackId) {
-            FavoriteSyncState(
-                confirmedLoved = current.isLoved,
-                desiredLoved = current.isLoved,
-            )
-        }
-        val targetLoved = !syncState.desiredLoved
-        syncState.desiredLoved = targetLoved
+        val request = favoriteSyncManager.toggleWithResult(current)
         viewModelScope.launch {
-            // Publish instead of only updating the queue so list screens (and
-            // the car session) flip their hearts for the same track too.
-            favoriteSyncManager.publish(
-                FavoriteEdit(trackId, targetLoved, if (targetLoved) 1 else -1),
-            )
-            if (!syncState.isSyncing) {
-                syncState.isSyncing = true
-                syncFavorite(trackId)
-            }
-        }
-    }
-
-    private suspend fun syncFavorite(trackId: String) {
-        val syncState = favoriteSyncStates[trackId] ?: return
-        try {
-            while (syncState.desiredLoved != syncState.confirmedLoved) {
-                val targetLoved = syncState.desiredLoved
-                val serverLoved = meRepository.toggleFavorite(trackId)
-                if (serverLoved != null) {
-                    syncState.confirmedLoved = serverLoved
-                    val current = queue.value.current?.track
-                    if (
-                        syncState.desiredLoved == serverLoved &&
-                        current?.id == trackId &&
-                        current.isLoved != serverLoved
-                    ) {
-                        // Confirmation only aligns the absolute value — lists
-                        // already counted the optimistic delta, so delta 0.
-                        favoriteSyncManager.publish(FavoriteEdit(trackId, serverLoved, 0))
-                    }
-                } else if (syncState.desiredLoved == targetLoved) {
-                    syncState.desiredLoved = syncState.confirmedLoved
-                    favoriteSyncManager.publish(
-                        FavoriteEdit(trackId, syncState.confirmedLoved, if (targetLoved) -1 else 1),
-                    )
-                    _favoriteErrors.tryEmit(Unit)
-                }
-            }
-        } finally {
-            syncState.isSyncing = false
-            if (syncState.desiredLoved == syncState.confirmedLoved) {
-                favoriteSyncStates.remove(trackId)
+            if (request.awaitOutcome() == FavoriteToggleOutcome.FAILED) {
+                _favoriteErrors.emit(Unit)
             }
         }
     }
 }
-
-private data class FavoriteSyncState(
-    var confirmedLoved: Boolean,
-    var desiredLoved: Boolean,
-    var isSyncing: Boolean = false,
-)
 
 @Composable
 fun PlayerRoute(
@@ -337,14 +286,12 @@ fun PlayerRoute(
     val configuration = LocalConfiguration.current
     val uiMode = context.resources.configuration.uiMode
     val isAutomotive = remember(context, uiMode) {
-        context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
-            (uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_CAR ||
-            Build.PRODUCT.contains("gcar", ignoreCase = true) ||
-            Build.DEVICE.contains("car", ignoreCase = true) ||
-            Build.FINGERPRINT.contains("gcar", ignoreCase = true)
+        context.isAutomotiveUi()
     }
     val useCompactPhoneLayout = !isAutomotive &&
         (configuration.screenHeightDp <= 820 || configuration.fontScale > 1.05f)
+    val useLandscapePhoneLayout = !isAutomotive &&
+        configuration.screenWidthDp > configuration.screenHeightDp
     val metrics = if (isAutomotive) {
         PlayerLayoutMetrics.automotive()
     } else {
@@ -576,13 +523,12 @@ fun PlayerRoute(
                     },
                 ),
         ) {
-            // Soft animated warm haze rising from the bottom; phone-only for safety.
-            if (!isAutomotive) {
-                BreathingBottomHaze(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(280.dp),
+            // A single cached, phone-only glow provides restrained ambient motion
+            // without adding continuous visual work to the automotive or idle UI.
+            if (!isAutomotive && model != null) {
+                PlayerSupernovaGlow(
+                    isPlaying = model.isPlaying,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
             Column(
@@ -625,199 +571,249 @@ fun PlayerRoute(
                                     translationY = if (isAutomotive) 0f else dismissOffsetPx
                                 },
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(bottom = metrics.bottomControlsReservedHeight)
-                                    .graphicsLayer {
-                                        translationX = dragOffsetPx
-                                        val progress = (abs(dragOffsetPx) / swipeThresholdPx).coerceIn(0f, 1f)
-                                        alpha = 1f - (progress * 0.18f)
-                                        scaleX = 1f - (progress * 0.04f)
-                                        scaleY = 1f - (progress * 0.04f)
+                            if (useLandscapePhoneLayout) {
+                                LandscapePhonePlayerContent(
+                                    model = model,
+                                    queue = queue,
+                                    metrics = metrics,
+                                    favoriteActionLabel = if (model.isLoved) unfavoriteLabel else favoriteLabel,
+                                    isSeeking = isSeeking,
+                                    selectedProgress = selectedProgress,
+                                    artworkSwipeModifier = artworkSwipeModifier,
+                                    onFavorite = {
+                                        transportTick()
+                                        viewModel.toggleFavorite()
                                     },
-                                verticalArrangement = if (isAutomotive) Arrangement.Top else Arrangement.spacedBy(10.dp),
-                            ) {
-                                if (!isAutomotive) {
-                                    GlowingArtwork(
-                                        artworkUrl = model.artworkUrl,
-                                        metrics = metrics,
-                                        modifier = artworkSwipeModifier,
-                                    )
-                                    Spacer(modifier = Modifier.height(18.dp))
-                                }
-
-                                Row(
+                                    onProgressChange = {
+                                        isSeeking = true
+                                        selectedProgress = it
+                                    },
+                                    onProgressChangeFinished = {
+                                        selectedProgress = it
+                                        viewModel.seekToFraction(it)
+                                        isSeeking = false
+                                    },
+                                    onJump = { absoluteIndex ->
+                                        transportTick()
+                                        viewModel.jumpToQueueIndex(absoluteIndex)
+                                    },
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(
-                                            horizontal = metrics.titleHorizontalPadding,
-                                            vertical = metrics.titleVerticalPadding,
-                                        ),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    // Modest car-only artwork thumbnail — picks up the
-                                    // CarPlay/YT-Music idiom without competing with controls.
-                                    if (isAutomotive) {
-                                        AsyncImage(
-                                            model = rememberSizedImageRequest(model.artworkUrl, 80.dp, 80.dp),
-                                            contentDescription = null,
-                                            modifier = Modifier
-                                                .size(80.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(Color(0xFF211B18)),
-                                            contentScale = ContentScale.Crop,
-                                        )
-                                        Spacer(modifier = Modifier.size(14.dp))
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = model.title,
-                                            style = if (isAutomotive) {
-                                                MaterialTheme.typography.titleLarge.copy(
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = Color.White,
-                                                )
-                                            } else {
-                                                MaterialTheme.typography.headlineMedium.copy(
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = Color.White,
-                                                )
-                                            },
-                                            maxLines = if (isAutomotive) 1 else 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            text = model.artist,
-                                            style = if (isAutomotive) {
-                                                MaterialTheme.typography.bodyLarge.copy(color = Color(0xFFFFC4AA))
-                                            } else {
-                                                MaterialTheme.typography.titleMedium.copy(color = Color(0xFFFFB08A))
-                                            },
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    if (isAutomotive) {
-                                        IconButton(
-                                            onClick = {
-                                                transportTick()
-                                                viewModel.toggleFavorite()
-                                            },
-                                            modifier = Modifier
-                                                .size(52.dp)
-                                                .pressFeedback(pressedScale = 0.90f, label = "autoPlayerFavoritePress"),
-                                        ) {
-                                            Icon(
-                                                imageVector = if (model.isLoved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                contentDescription = if (model.isLoved) unfavoriteLabel else favoriteLabel,
-                                                tint = Color(0xFFFF9A6D),
-                                                modifier = Modifier.size(34.dp),
-                                            )
-                                        }
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(52.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0x1AFF8A3D))
-                                                .pressFeedback(pressedScale = 0.90f, label = "playerFavoritePress")
-                                                .clickable {
-                                                    transportTick()
-                                                    viewModel.toggleFavorite()
-                                                },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                imageVector = if (model.isLoved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                                contentDescription = if (model.isLoved) unfavoriteLabel else favoriteLabel,
-                                                tint = Color(0xFFFF9A6D),
-                                                modifier = Modifier.size(26.dp),
-                                            )
-                                        }
-                                    }
-                                }
-
+                                        .fillMaxSize()
+                                        .padding(bottom = metrics.bottomControlsReservedHeight)
+                                        .graphicsLayer {
+                                            translationX = dragOffsetPx
+                                            val progress = (abs(dragOffsetPx) / swipeThresholdPx).coerceIn(0f, 1f)
+                                            alpha = 1f - (progress * 0.18f)
+                                            scaleX = 1f - (progress * 0.04f)
+                                            scaleY = 1f - (progress * 0.04f)
+                                        },
+                                )
+                            } else {
                                 Column(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(
-                                            horizontal = metrics.progressHorizontalPadding,
-                                            vertical = metrics.progressVerticalPadding,
-                                        ),
+                                        .fillMaxSize()
+                                        .padding(bottom = metrics.bottomControlsReservedHeight)
+                                        .graphicsLayer {
+                                            translationX = dragOffsetPx
+                                            val progress = (abs(dragOffsetPx) / swipeThresholdPx).coerceIn(0f, 1f)
+                                            alpha = 1f - (progress * 0.18f)
+                                            scaleX = 1f - (progress * 0.04f)
+                                            scaleY = 1f - (progress * 0.04f)
+                                        },
+                                    verticalArrangement = if (isAutomotive) Arrangement.Top else Arrangement.spacedBy(10.dp),
                                 ) {
-                                    PlayerScrubber(
-                                        progress = if (isSeeking) selectedProgress else model.progressFraction,
-                                        enabled = model.durationMs > 0L,
-                                        onProgressChange = {
-                                            isSeeking = true
-                                            selectedProgress = it
-                                        },
-                                        onProgressChangeFinished = {
-                                            selectedProgress = it
-                                            viewModel.seekToFraction(it)
-                                            isSeeking = false
-                                        },
-                                        modifier = Modifier
-                                            .fillMaxWidth(),
-                                    )
+                                    if (!isAutomotive) {
+                                        PlayerArtwork(
+                                            artworkUrl = model.artworkUrl,
+                                            metrics = metrics,
+                                            modifier = artworkSwipeModifier,
+                                        )
+                                        Spacer(modifier = Modifier.height(18.dp))
+                                    }
+
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(top = 8.dp),
+                                            .padding(
+                                                horizontal = metrics.titleHorizontalPadding,
+                                                vertical = metrics.titleVerticalPadding,
+                                            ),
                                         horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        // While the user is dragging the
-                                        // thumb the labels track the drag
-                                        // position; once released they fall
-                                        // back to the live playback position.
-                                        // Previously the labels stayed pinned
-                                        // until release, so the thumb visually
-                                        // moved against frozen time digits.
-                                        val displayedElapsed = if (isSeeking) {
-                                            PlayerScreenUiModel.formatMs(
-                                                (selectedProgress * model.durationMs).toLong()
-                                                    .coerceAtLeast(0L),
+                                        // Modest car-only artwork thumbnail — picks up the
+                                        // CarPlay/YT-Music idiom without competing with controls.
+                                        if (isAutomotive) {
+                                            AsyncImage(
+                                                model = rememberSizedImageRequest(model.artworkUrl, 80.dp, 80.dp),
+                                                contentDescription = null,
+                                                modifier = Modifier
+                                                    .size(80.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(Color(0xFF211B18)),
+                                                contentScale = ContentScale.Crop,
                                             )
-                                        } else {
-                                            model.elapsedLabel
+                                            Spacer(modifier = Modifier.size(14.dp))
                                         }
-                                        val displayedRemaining = if (isSeeking) {
-                                            val remainingMs = (model.durationMs - (selectedProgress * model.durationMs).toLong())
-                                                .coerceAtLeast(0L)
-                                            "-${PlayerScreenUiModel.formatMs(remainingMs)}"
-                                        } else {
-                                            model.remainingLabel
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = model.title,
+                                                modifier = Modifier.semantics { heading() },
+                                                style = if (isAutomotive) {
+                                                    MaterialTheme.typography.titleLarge.copy(
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White,
+                                                    )
+                                                } else {
+                                                    MaterialTheme.typography.headlineMedium.copy(
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = Color.White,
+                                                    )
+                                                },
+                                                maxLines = if (isAutomotive) 1 else 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                text = model.artist,
+                                                style = if (isAutomotive) {
+                                                    MaterialTheme.typography.bodyLarge.copy(color = Color(0xFFFFC4AA))
+                                                } else {
+                                                    MaterialTheme.typography.titleMedium.copy(color = Color(0xFFFFB08A))
+                                                },
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
                                         }
-                                        Text(displayedElapsed, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
-                                        Text(displayedRemaining, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
+                                        val favoriteActionLabel = if (model.isLoved) unfavoriteLabel else favoriteLabel
+                                        if (isAutomotive) {
+                                            IconToggleButton(
+                                                checked = model.isLoved,
+                                                onCheckedChange = {
+                                                    transportTick()
+                                                    viewModel.toggleFavorite()
+                                                },
+                                                modifier = Modifier
+                                                    .size(52.dp)
+                                                    .pressFeedback(pressedScale = 0.90f, label = "autoPlayerFavoritePress"),
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (model.isLoved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                    contentDescription = favoriteActionLabel,
+                                                    tint = Color(0xFFFF9A6D),
+                                                    modifier = Modifier.size(34.dp),
+                                                )
+                                            }
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(52.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0x1AFF8A3D))
+                                                    .pressFeedback(pressedScale = 0.90f, label = "playerFavoritePress")
+                                                    .clickable(
+                                                        onClickLabel = favoriteActionLabel,
+                                                        role = Role.Checkbox,
+                                                        onClick = {
+                                                            transportTick()
+                                                            viewModel.toggleFavorite()
+                                                        },
+                                                    )
+                                                    .semantics {
+                                                        contentDescription = favoriteActionLabel
+                                                        toggleableState = ToggleableState(model.isLoved)
+                                                    },
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (model.isLoved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFF9A6D),
+                                                    modifier = Modifier.size(26.dp),
+                                                )
+                                            }
+                                        }
                                     }
-                                }
 
-                                // Up-next strip — visible on phone only.
-                                // Keep it compact because this region sits
-                                // between the scrubber and fixed transport
-                                // deck, and Samsung display scaling can
-                                // reduce the effective vertical space.
-                                if (!isAutomotive && queue.items.size - queue.currentIndex > 1) {
-                                    UpNextStrip(
-                                        items = queue.items,
-                                        currentIndex = queue.currentIndex,
-                                        onJump = { absoluteIndex ->
-                                            transportTick()
-                                            viewModel.jumpToQueueIndex(absoluteIndex)
-                                        },
-                                        modifier = Modifier.padding(
-                                            top = 8.dp,
-                                            start = metrics.titleHorizontalPadding,
-                                            end = metrics.titleHorizontalPadding,
-                                        ),
-                                    )
-                                }
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(
+                                                horizontal = metrics.progressHorizontalPadding,
+                                                vertical = metrics.progressVerticalPadding,
+                                            ),
+                                    ) {
+                                        PlayerScrubber(
+                                            progress = if (isSeeking) selectedProgress else model.progressFraction,
+                                            enabled = model.durationMs > 0L,
+                                            onProgressChange = {
+                                                isSeeking = true
+                                                selectedProgress = it
+                                            },
+                                            onProgressChangeFinished = {
+                                                selectedProgress = it
+                                                viewModel.seekToFraction(it)
+                                                isSeeking = false
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth(),
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            // While the user is dragging the
+                                            // thumb the labels track the drag
+                                            // position; once released they fall
+                                            // back to the live playback position.
+                                            // Previously the labels stayed pinned
+                                            // until release, so the thumb visually
+                                            // moved against frozen time digits.
+                                            val displayedElapsed = if (isSeeking) {
+                                                PlayerScreenUiModel.formatMs(
+                                                    (selectedProgress * model.durationMs).toLong()
+                                                        .coerceAtLeast(0L),
+                                                )
+                                            } else {
+                                                model.elapsedLabel
+                                            }
+                                            val displayedRemaining = if (isSeeking) {
+                                                val remainingMs = (model.durationMs - (selectedProgress * model.durationMs).toLong())
+                                                    .coerceAtLeast(0L)
+                                                "-${PlayerScreenUiModel.formatMs(remainingMs)}"
+                                            } else {
+                                                model.remainingLabel
+                                            }
+                                            Text(displayedElapsed, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
+                                            Text(displayedRemaining, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyLarge)
+                                        }
+                                    }
 
-                                if (!isAutomotive) {
-                                    Spacer(modifier = Modifier.weight(1f))
+                                    // Up-next strip — visible on phone only.
+                                    // Keep it compact because this region sits
+                                    // between the scrubber and fixed transport
+                                    // deck, and Samsung display scaling can
+                                    // reduce the effective vertical space.
+                                    if (!isAutomotive && queue.items.size - queue.currentIndex > 1) {
+                                        UpNextStrip(
+                                            items = queue.items,
+                                            currentIndex = queue.currentIndex,
+                                            onJump = { absoluteIndex ->
+                                                transportTick()
+                                                viewModel.jumpToQueueIndex(absoluteIndex)
+                                            },
+                                            modifier = Modifier.padding(
+                                                top = 8.dp,
+                                                start = metrics.titleHorizontalPadding,
+                                                end = metrics.titleHorizontalPadding,
+                                            ),
+                                        )
+                                    }
+
+                                    if (!isAutomotive) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
                                 }
                             }
                             PlayerControlDeck(
@@ -854,6 +850,148 @@ fun PlayerRoute(
 }
 
 @Composable
+private fun LandscapePhonePlayerContent(
+    model: PlayerScreenUiModel,
+    queue: PlaybackQueue,
+    metrics: PlayerLayoutMetrics,
+    favoriteActionLabel: String,
+    isSeeking: Boolean,
+    selectedProgress: Float,
+    artworkSwipeModifier: Modifier,
+    onFavorite: () -> Unit,
+    onProgressChange: (Float) -> Unit,
+    onProgressChangeFinished: (Float) -> Unit,
+    onJump: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .testTag("playerLandscapeLayout")
+            .statusBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(0.46f)
+                .fillMaxHeight()
+                .padding(end = 18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            val artworkSide = minOf(maxWidth, maxHeight)
+            AsyncImage(
+                model = rememberPlayerArtworkRequest(model.artworkUrl),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(artworkSide)
+                    .then(artworkSwipeModifier)
+                    .clip(RoundedCornerShape(metrics.artworkCornerRadius))
+                    .background(Color(0xFF211B18)),
+                contentScale = ContentScale.Crop,
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(0.54f)
+                .fillMaxHeight(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp),
+                ) {
+                    Text(
+                        text = model.title,
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = model.artist,
+                        style = MaterialTheme.typography.titleMedium.copy(color = Color(0xFFFFB08A)),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Color(0x1AFF8A3D))
+                        .pressFeedback(pressedScale = 0.90f, label = "landscapePlayerFavoritePress")
+                        .clickable(
+                            onClickLabel = favoriteActionLabel,
+                            role = Role.Checkbox,
+                            onClick = onFavorite,
+                        )
+                        .semantics {
+                            contentDescription = favoriteActionLabel
+                            toggleableState = ToggleableState(model.isLoved)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (model.isLoved) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = null,
+                        tint = Color(0xFFFF9A6D),
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+
+            PlayerScrubber(
+                progress = if (isSeeking) selectedProgress else model.progressFraction,
+                enabled = model.durationMs > 0L,
+                onProgressChange = onProgressChange,
+                onProgressChangeFinished = onProgressChangeFinished,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                val displayedElapsed = if (isSeeking) {
+                    PlayerScreenUiModel.formatMs(
+                        (selectedProgress * model.durationMs).toLong().coerceAtLeast(0L),
+                    )
+                } else {
+                    model.elapsedLabel
+                }
+                val displayedRemaining = if (isSeeking) {
+                    val remainingMs = (model.durationMs - (selectedProgress * model.durationMs).toLong())
+                        .coerceAtLeast(0L)
+                    "-${PlayerScreenUiModel.formatMs(remainingMs)}"
+                } else {
+                    model.remainingLabel
+                }
+                Text(displayedElapsed, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyMedium)
+                Text(displayedRemaining, color = Color(0xFFABA4A0), style = MaterialTheme.typography.bodyMedium)
+            }
+
+            if (queue.items.size - queue.currentIndex > 1) {
+                UpNextStrip(
+                    items = queue.items,
+                    currentIndex = queue.currentIndex,
+                    onJump = onJump,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlayerScrubber(
     progress: Float,
     enabled: Boolean,
@@ -870,7 +1008,7 @@ private fun PlayerScrubber(
 
     BoxWithConstraints(
         modifier = modifier
-            .height(44.dp)
+            .height(48.dp)
             .semantics {
                 contentDescription = progressLabel
                 progressBarRangeInfo = ProgressBarRangeInfo(
@@ -1025,7 +1163,9 @@ private fun CompactPlayerTopBar(
     Surface(
         color = Color(0xFF2D211C),
         contentColor = Color.White,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(),
     ) {
         Row(
             modifier = Modifier
@@ -1038,7 +1178,7 @@ private fun CompactPlayerTopBar(
             IconButton(
                 onClick = onCollapse,
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(48.dp)
                     .pressFeedback(pressedScale = 0.90f, label = "compactPlayerCollapsePress"),
             ) {
                 Icon(
@@ -1048,7 +1188,7 @@ private fun CompactPlayerTopBar(
                     modifier = Modifier.size(24.dp),
                 )
             }
-            Spacer(modifier = Modifier.size(42.dp))
+            Spacer(modifier = Modifier.size(48.dp))
         }
     }
 }
@@ -1183,7 +1323,9 @@ private fun UpNextStrip(
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = FontWeight.SemiBold,
             ),
-            modifier = Modifier.padding(bottom = 6.dp),
+            modifier = Modifier
+                .padding(bottom = 6.dp)
+                .semantics { heading() },
         )
         androidx.compose.foundation.lazy.LazyRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1213,6 +1355,7 @@ private fun UpNextTile(
         R.string.player_track_in_queue_a11y,
         track.title,
         track.artist,
+        queueNumber,
     )
     Surface(
         onClick = onClick,
@@ -1260,7 +1403,7 @@ private fun UpNextTile(
             }
             Text(
                 text = queueNumber.toString(),
-                color = Color(0x66E3DDD9),
+                color = Color(0x99E3DDD9),
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
             )
         }
@@ -1268,30 +1411,17 @@ private fun UpNextTile(
 }
 
 @Composable
-private fun GlowingArtwork(
+private fun PlayerArtwork(
     artworkUrl: String?,
     metrics: PlayerLayoutMetrics,
     modifier: Modifier = Modifier,
 ) {
-    // Slow ~5.5s breathing cycle on the warm halo behind the cover art. The
-    // transition only runs while the player screen is composed, so the cost
-    // is bounded to the screen actually being open.
-    val transition = rememberInfiniteTransition(label = "playerArtworkGlow")
-    val breath by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 5500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "artworkBreath",
-    )
-    val glowRadius = 760f + 260f * breath
-    val glowAlpha = 0.78f + 0.22f * breath
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            // The phone player draws edge-to-edge, so its own artwork must
+            // explicitly clear the status bar before applying visual spacing.
+            .statusBarsPadding()
             .padding(
                 start = metrics.artworkHorizontalPadding,
                 top = metrics.artworkTopPadding,
@@ -1299,24 +1429,6 @@ private fun GlowingArtwork(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        // The signature soft warm glow that radiates from behind the cover art.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(metrics.artworkWidthFraction)
-                .aspectRatio(1f)
-                .padding(8.dp)
-                .graphicsLayer { alpha = glowAlpha }
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x66FF8A3D),
-                            Color(0x33FF8A3D),
-                            Color(0x00FF8A3D),
-                        ),
-                        radius = glowRadius,
-                    ),
-                ),
-        )
         AsyncImage(
             model = rememberPlayerArtworkRequest(artworkUrl),
             contentDescription = null,
@@ -1366,34 +1478,53 @@ private fun rememberPlayerArtworkRequest(url: String?): Any? {
     }
 }
 
-/** Soft warm haze anchored to the bottom of the player background; phone-only. */
+/**
+ * Slow, low-contrast player atmosphere. The cached brush stays fixed while only
+ * draw alpha changes, keeping the continuous work small and layout-free.
+ */
 @Composable
-private fun BreathingBottomHaze(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "playerBottomHaze")
-    // Slightly out-of-phase with the artwork halo for an organic, layered feel.
-    val breath by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 7000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "hazeBreath",
-    )
-    val hazeAlpha = 0.55f + 0.25f * breath
+private fun PlayerSupernovaGlow(
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // A paused player settles on the midpoint. Compose's animation clock also
+    // honors Android's animator-duration scale, so reduced-motion users get the
+    // same static treatment while playback continues normally.
+    val pulse = if (isPlaying) {
+        val transition = rememberInfiniteTransition(label = "playerSupernovaGlow")
+        transition.animateFloat(
+            initialValue = 0.82f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 16_000, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "supernovaPulse",
+        )
+    } else {
+        null
+    }
+
     Box(
         modifier = modifier
-            .fillMaxWidth()
-            .graphicsLayer { alpha = hazeAlpha }
-            .background(
-                brush = Brush.radialGradient(
+            .testTag("playerSupernovaGlow")
+            .drawWithCache {
+                val glow = Brush.radialGradient(
                     colors = listOf(
-                        Color(0x40FF8A3D),
+                        Color(0x24FFB28A),
                         Color(0x18FF8A3D),
-                        Color(0x00FF8A3D),
+                        Color(0x0AFF5E2E),
+                        Color.Transparent,
                     ),
-                    radius = 700f + 220f * breath,
-                ),
-            ),
+                    center = Offset(size.width * 0.5f, size.height * 0.22f),
+                    radius = size.width * 0.78f,
+                )
+                onDrawBehind {
+                    drawRect(
+                        brush = glow,
+                        alpha = pulse?.value ?: 0.91f,
+                    )
+                }
+            },
     )
 }

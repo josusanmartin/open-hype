@@ -41,8 +41,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ConnectivityBanner(
     isOffline: Boolean,
-    isLimited: Boolean = false,
     modifier: Modifier = Modifier,
+    isLimited: Boolean = false,
 ) {
     val visible = isOffline || isLimited
     AnimatedVisibility(

@@ -41,8 +41,17 @@ jobs:
       - name: Permission for gradlew
         run: chmod +x gradlew
 
-      - name: Run tests
-        run: ./gradlew --no-daemon testDebugUnitTest testReleaseUnitTest
+      - name: Validate tag matches the app version
+        run: |
+          app_version="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ -z "$app_version" ] || [ "$tag_version" != "$app_version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match app version $app_version" >&2
+            exit 1
+          fi
+
+      - name: Run release quality gates
+        run: bash scripts/dev.sh ci
 
       - name: Restore release keystore
         env:
@@ -57,22 +66,20 @@ jobs:
             echo "HYPE_RELEASE_STORE_FILE=$HYPE_RELEASE_STORE_FILE_SECRET" >> "$GITHUB_ENV"
           fi
 
-      - name: Assemble release APK + AAB and debug APK
+      - name: Assemble signed release APK + AAB
         env:
           HYPE_RELEASE_STORE_PASSWORD: ${{ secrets.HYPE_RELEASE_STORE_PASSWORD }}
           HYPE_RELEASE_KEY_ALIAS: ${{ secrets.HYPE_RELEASE_KEY_ALIAS }}
           HYPE_RELEASE_KEY_PASSWORD: ${{ secrets.HYPE_RELEASE_KEY_PASSWORD }}
-        # Unsigned when secrets are absent (validateReleaseSigning warns); the
-        # release notes below say which one shipped.
-        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :app:bundleRelease
+        run: ./gradlew --no-daemon -PrequireReleaseSigning=true :app:assembleRelease :app:bundleRelease
 
       - name: Stage versioned artifacts
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p staged
-          cp app/build/outputs/apk/debug/*.apk "staged/hype-car-$version-debug-installable.apk"
           cp app/build/outputs/apk/release/*.apk "staged/hype-car-$version-release.apk"
           cp app/build/outputs/bundle/release/*.aab "staged/hype-car-$version-release.aab"
+          (cd staged && sha256sum *.apk *.aab > SHA256SUMS)
           ls -la staged
 
       - name: Publish GitHub Release

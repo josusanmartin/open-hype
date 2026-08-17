@@ -92,6 +92,26 @@ class DefaultCatalogRepositoryTest {
             assertThat(expected).hasMessageThat().isEqualTo("offline")
         }
     }
+
+    @Test
+    fun `latest never exposes retained account cache while gate is inactive`() = runBlocking {
+        val api = StubLatestApi(
+            pages = listOf(
+                listOf(sampleTrackDto("account-a", isLoved = true)),
+                listOf(sampleTrackDto("signed-out")),
+            ),
+        )
+        val gate = AccountDataWriteGate(initiallyActive = true)
+        val repo = DefaultCatalogRepository(api, FakeTrackDao(), FakeTrackListDao(), Json, gate)
+        assertThat(repo.latest(LatestMode.ALL, page = 1, count = 30).single().id)
+            .isEqualTo("account-a")
+
+        gate.deactivate()
+        val signedOut = repo.latest(LatestMode.ALL, page = 1, count = 30)
+
+        assertThat(signedOut.map { it.id }).containsExactly("signed-out")
+        assertThat(api.callCount).isEqualTo(2)
+    }
 }
 
 private class StubLatestApi(

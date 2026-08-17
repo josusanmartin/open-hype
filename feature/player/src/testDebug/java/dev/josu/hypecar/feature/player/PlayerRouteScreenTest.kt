@@ -1,12 +1,15 @@
 package dev.josu.hypecar.feature.player
 
 import androidx.compose.material3.Surface
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import com.google.common.truth.Truth.assertThat
 import dev.josu.hypecar.core.model.FeedItem
 import dev.josu.hypecar.core.model.FeedMode
@@ -17,6 +20,8 @@ import dev.josu.hypecar.core.model.Track
 import dev.josu.hypecar.core.model.repository.MeRepository
 import dev.josu.hypecar.core.model.repository.PlaybackRepository
 import dev.josu.hypecar.core.ui.HypeTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.junit.Rule
@@ -42,6 +47,7 @@ class PlayerRouteScreenTest {
         }
 
         composeRule.onNodeWithText("Nothing is playing.").assertIsDisplayed()
+        composeRule.onNodeWithTag("playerSupernovaGlow").assertDoesNotExist()
     }
 
     @Test
@@ -63,8 +69,31 @@ class PlayerRouteScreenTest {
 
         composeRule.onNodeWithText("Light of the Dead").assertIsDisplayed()
         composeRule.onNodeWithText("Brooklynzhen").assertIsDisplayed()
+        composeRule.onNodeWithTag("playerSupernovaGlow").assertIsDisplayed()
         // Play button content description (not text). When isPlaying=false the button reads "Play".
         composeRule.onNodeWithContentDescription("Play").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-car", sdk = [34])
+    fun `automotive player omits the ambient supernova`() {
+        val track = sampleTrack(id = "abc", title = "Light of the Dead", artist = "Brooklynzhen")
+        val playback = StubPlayback(
+            initial = PlaybackQueue(
+                items = listOf(PlaybackItem(track)),
+                currentIndex = 0,
+                isPlaying = true,
+                durationMs = 200_000,
+            ),
+        )
+        composeRule.setContent {
+            HypeTheme {
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
+            }
+        }
+
+        composeRule.onNodeWithTag("playerSupernovaGlow").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("Collapse").assertIsDisplayed()
     }
 
     @Test
@@ -89,6 +118,51 @@ class PlayerRouteScreenTest {
         composeRule.onNodeWithText("Up next").assertIsDisplayed()
         composeRule.onNodeWithText("Queued Track").assertIsDisplayed()
         composeRule.onNodeWithText("Artist B").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w891dp-h411dp-land", sdk = [34])
+    fun `landscape phone uses a two pane player and keeps core controls visible`() {
+        val now = sampleTrack("a", "Opening Track", "Artist A")
+        val next = sampleTrack("b", "Queued Track", "Artist B")
+        val playback = StubPlayback(
+            initial = PlaybackQueue(
+                items = listOf(PlaybackItem(now), PlaybackItem(next)),
+                currentIndex = 0,
+                isPlaying = true,
+                durationMs = 100_000,
+            ),
+        )
+        composeRule.setContent {
+            HypeTheme {
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
+            }
+        }
+
+        composeRule.onNodeWithTag("playerLandscapeLayout").assertIsDisplayed()
+        composeRule.onNodeWithText("Opening Track").assertIsDisplayed()
+        composeRule.onNodeWithText("Queued Track").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Pause").assertIsDisplayed()
+    }
+
+    @Test
+    fun `phone scrubber keeps a 48dp interaction target`() {
+        val track = sampleTrack("a", "Title", "Artist")
+        val playback = StubPlayback(
+            initial = PlaybackQueue(
+                items = listOf(PlaybackItem(track)),
+                currentIndex = 0,
+                isPlaying = true,
+                durationMs = 100_000,
+            ),
+        )
+        composeRule.setContent {
+            HypeTheme {
+                Surface { PlayerRoute(viewModel = newPlayerViewModel(playback, NoOpMe)) }
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Playback position").assertHeightIsAtLeast(48.dp)
     }
 
     @Test
@@ -223,6 +297,9 @@ private class AcceptingMe(private val toggleResult: Boolean) : MeRepository {
 
 private fun newPlayerViewModel(playback: PlaybackRepository, me: MeRepository) = PlayerViewModel(
     playbackRepository = playback,
-    meRepository = me,
-    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(me, playback),
+    favoriteSyncManager = dev.josu.hypecar.core.data.repository.FavoriteSyncManager(
+        me,
+        playback,
+        CoroutineScope(Dispatchers.Main.immediate),
+    ),
 )

@@ -18,6 +18,7 @@ rootProject.name = "hype-car"
 
 include(
     ":app",
+    ":baselineprofile",
     ":core:model",
     ":core:network",
     ":core:data",
